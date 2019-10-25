@@ -1,3 +1,4 @@
+#ifndef IMAGEWIDGET_QML
 #include "ROIDialog.hxx"
 #include <QPushButton>
 #include <QScreen>
@@ -56,7 +57,7 @@ ROIDialog::ROIDialog(cv::Mat src, ImageBox& ib, const double& sc, QWidget *paren
 	ptr->displayCVMat(src);
 	if (ib.width == 0 || ib.height == 0)
 	{
-		ptr->paintNewImageBox(ib.name, ib.toQColor(), 1, true);
+		ptr->paintNewImageBox(ib.type,ib.name, ib.toQColor(), 1, true);
 	}
 	else
 	{
@@ -82,7 +83,7 @@ ROIDialog::ROIDialog(cv::Mat src, ImageBox& ib, const double& sc, QWidget *paren
 	});
 	connect(reset_ptr, &QPushButton::clicked, this, [this]() {
 		d->iw_ptr->clearAllBoxs();
-		d->iw_ptr->paintNewImageBox(d->rtn_box.name, d->rtn_box.toQColor(), 1, true);
+		d->iw_ptr->paintNewImageBox(d->rtn_box.type,d->rtn_box.name, d->rtn_box.toQColor(), 1, true);
 		});
 }
 
@@ -92,3 +93,5 @@ ROIDialog::~ROIDialog()
 }
 
 #include "ROIDialog.moc"
+
+#endif // IMAGEWIDGET_QML

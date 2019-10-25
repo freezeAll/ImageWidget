@@ -1,7 +1,7 @@
 #pragma once
-
+#ifndef IMAGEWIDGET_QML
 #include <QDialog>
-#include "ImageWidget.h"
+#include "ImageWidget.hxx"
 
 class ROIDialogPrivate;
 class ROIDialog : public QDialog
@@ -14,3 +14,4 @@ public:
 private:
 	ROIDialogPrivate * d;
 };
+#endif
