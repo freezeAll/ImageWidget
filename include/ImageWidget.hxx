@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <QGlobal.h>
 #ifdef IMAGEWIDGET_QML
@@ -6,335 +6,216 @@
 #include <QtGui/QPainter>
 #else
 #include <QtWidgets/QWidget>
+#include <QString>
+#include <QPen>
+#include <QBrush>
+//#include <QObject>
 #endif // IMAGEWIDGET_QML
 #include "opencv2/opencv.hpp"
-Q_DECLARE_METATYPE(cv::Mat)
+#include <optional>
+#include <QVariant>
+#pragma once
+#include <QtCore/qglobal.h>
+
+#ifndef BUILD_STATIC
+# if defined(IMAGEWIDGET_LIB)
+#  define IMAGEWIDGET_EXPORT Q_DECL_EXPORT
+# else
+#  define IMAGEWIDGET_EXPORT Q_DECL_IMPORT
+# endif
+#else
+# define IMAGEWIDGET_EXPORT
+#endif
+
+
 class ImageWidgetPrivate;
 class ImageWidgetBasePrivate;
-class ImageBox : public QObject
+
+class IMAGEWIDGET_EXPORT ImageBox : public QObject
 {
 	Q_OBJECT
+
 public:
-	enum ShapeType
+	enum GrabedEdgeType
 	{
-		Point,
-		Line,
-		Rect,
-		Circle
+		None,
+		Top,
+		Bottom,
+		Left,
+		Right,
+		TopLeft,
+		TopRight,
+		BottomLeft,
+		BottomRight
 	};
-	Q_ENUM(ShapeType)
-	ImageBox(
-		const ImageBox::ShapeType& itype, 
-		const QString& name = "default", 
-		const int& ix1 = 0, const int& iy1 = 0, 
-		const int& ix2 = 0, const int& iy2 = 0, 
-		const QColor& color = QColor(0, 0, 255), 
-		const int& id = -1, 
-		const bool& display = true) :
-		id(id),
-		x(ix1),
-		y(iy1),
-		name(name),
-		display(display),
-		editing(false),
-		red(color.red()),
-		blue(color.blue()),
-		green(color.green()),
-		env(false),
-		type(itype)
-	{
-		switch (type)
-		{
-		case Point:
-			break;
-		case Circle:
-			width = ix2;
-			height = iy2;
-			break;
-		case Rect:
-			width = ix2;
-			height = iy2;
-			break;
-		case Line:
-			ex = ix2;
-			ey = iy2;
-			break;
-		default:
-			break;
-		}
-	}
-	ImageBox() = default;
-	ImageBox(const ImageBox& o)
-	{
-		name = o.name;
-		display = o.display;
-		env = o.env;
-		id = o.id;
-		x = o.x;
-		y = o.y;
-		width = o.width;
-		height = o.height;
-		ex = o.ex;
-		ey = o.ey;
-		editing = o.editing;
-		red = o.red;
-		green = o.green;
-		blue = o.blue;
-		type = o.type;
-	}
-	void operator=(const ImageBox& o)
-	{
-		name = o.name;
-		display = o.display;
-		env = o.env;
-		id = o.id;
-		x = o.x;
-		y = o.y;
-		width = o.width;
-		height = o.height;
-		ex = o.ex;
-		ey = o.ey;
-		editing = o.editing;
-		red = o.red;
-		green = o.green;
-		blue = o.blue;
-		type = o.type;
-	}
-	QString name;
+	ImageBox(const QString& name = "default",const int& id = -1, const bool& display = true, const bool& env = false, QObject* parent = nullptr);
+	ImageBox(const ImageBox& other);
+	~ImageBox();
+	virtual void operator=(const ImageBox& box);
+	Q_PROPERTY(bool display READ isDisplay WRITE setIsDisplay);
+	Q_PROPERTY(int boxID READ getBoxID WRITE setBoxID);
+	Q_PROPERTY(QString name READ getName WRITE setName);
+	Q_PROPERTY(bool env READ isEnv WRITE setIsEnv);
+	Q_PROPERTY(bool editing READ getEditing WRITE setEditing);
+
+	bool isDisplay();
+	bool isEnv();
+	void setIsEnv(const bool&);
+	void setIsDisplay(const bool&);
+	int getBoxID();
+	void setBoxID(const int&);
+	QString getName();
+	void setName(const QString&);
+	bool getEditing();
+	void setEditing(const bool&);
+	Q_INVOKABLE virtual void resetData() {};
+	virtual cv::Mat getMask(const QSize&) { return cv::Mat(); };
+	Q_INVOKABLE QVariant getMaskVar(const int& width,const int& height);
+protected:
+	virtual void paintShape(QPainter*, ImageWidgetBasePrivate*) {};
+	virtual bool isInBox(const QPoint&) { return false; };
+	virtual void moveBox(const QPointF&,const QSize&) {};
+	virtual std::optional<ImageBox::GrabedEdgeType> checkPress(const QPoint&, const double&) { return std::optional<ImageBox::GrabedEdgeType>(); };
+	virtual std::optional<ImageBox::GrabedEdgeType> checkMove(const QPoint&, const double&) { return std::optional<ImageBox::GrabedEdgeType>(); };
+	virtual void normalize() {};
+	virtual void startPaint(const QPointF&) {};
+	virtual void endPaint(const QPointF&) {};
+	virtual void editEdge(const ImageBox::GrabedEdgeType& type, const QPointF& pos) {};
+	virtual void fixShape(const QSize& size) {};
+protected:
+	friend class ImageWidgetPrivate;
+	friend class ImageWidget;
+	friend class ImageWidgetBasePrivate;
+	friend class ImageWidgetBase;
+	int boxID;
 	bool display;
+	QString name;
 	bool env;
-	int id;
+	bool editing;
+};
+Q_DECLARE_METATYPE(ImageBox)
+
+class IMAGEWIDGET_EXPORT RectImageBox : public ImageBox
+{
+	Q_OBJECT
+signals:
+public:
+	Q_INVOKABLE RectImageBox(QObject* parent = nullptr);
+	Q_INVOKABLE RectImageBox(
+		const double& x,
+		const double& y,
+		const double& width,
+		const double& height,
+		const QPen & pen = QPen(QColor(0,0,255)),
+		const QBrush& brush= QBrush(QColor(0, 0, 255, 0),Qt::BrushStyle::SolidPattern),
+		const QString& name = "default",
+		const int& id = -1,
+		const bool& display = true, 
+		const bool& env = false,
+		QObject* parent = nullptr);
+	Q_INVOKABLE RectImageBox(const RectImageBox& other);
+	virtual void operator=(const ImageBox& ib) override;
+	void operator=(const RectImageBox& rb);
+	~RectImageBox();
+	Q_PROPERTY(double x READ getX WRITE setX);
+	Q_PROPERTY(double y READ getY WRITE setY);
+	Q_PROPERTY(double width READ getWidth WRITE setWidth);
+	Q_PROPERTY(double height READ getHeight WRITE setHeight);
+	Q_PROPERTY(QPen pen READ getPen WRITE setPen);
+	Q_PROPERTY(QBrush brush READ getBrush WRITE setBrush);
+	Q_PROPERTY(QPen editingPen READ getEditingPen WRITE setEditingPen);
+	Q_PROPERTY(QBrush editingBrush READ getEditingBrush WRITE setEditingBrush);
+
+	QPen getPen();
+	QBrush getBrush();
+	QPen getEditingPen();
+	QBrush getEditingBrush();
+
+	void setPen(const QPen& pen);
+	void setEditingPen(const QPen& pen);
+	void setBrush(const QBrush& brush);
+	void setEditingBrush(const QBrush& brush);
+	void setX(const double& x);
+	double getX();
+	void setY(const double& y);
+	double getY();
+	void setWidth(const double& w);
+	double getWidth();
+	void setHeight(const double& h);
+	double getHeight();
+	Q_INVOKABLE QRect getQRect();
+	Q_INVOKABLE void fromQRect(const QRect& rect);
+	Q_INVOKABLE QRectF getQRectF();
+	Q_INVOKABLE void fromQRectF(const QRectF& rect);
+
+	Q_INVOKABLE cv::Rect getCVRect();
+	Q_INVOKABLE void fromCVRect(const cv::Rect& rect);
+	Q_INVOKABLE virtual void resetData() override;
+	Q_INVOKABLE virtual cv::Mat getMask(const QSize&) override;
+protected:
+	virtual void paintShape(QPainter*, ImageWidgetBasePrivate*) override;
+	virtual bool isInBox(const QPoint&) override;
+	virtual void moveBox(const QPointF& ,const QSize&) override;
+	virtual std::optional<ImageBox::GrabedEdgeType> checkPress(const QPoint&,const double&) override;
+	virtual std::optional<ImageBox::GrabedEdgeType> checkMove(const QPoint&, const double&) override;
+	virtual void normalize() override;
+	virtual void startPaint(const QPointF&) override;
+	virtual void endPaint(const QPointF&) override;
+	virtual void editEdge(const ImageBox::GrabedEdgeType& type, const QPointF& pos) override;
+	virtual void fixShape(const QSize& size) override;
 	double x;
 	double y;
 	double width;
 	double height;
-	double ex;
-	double ey;
-	bool editing;
-	int red;
-	int green;
-	int blue;
-	ShapeType type;
-	Q_PROPERTY(QString name READ getName WRITE setName)
-	QString getName()
-	{
-		return name;
-	}
-	void setName(const QString& n)
-	{
-		name = n;
-	}
-	Q_PROPERTY(bool display READ isDisplay WRITE setIsDisplayed)
-	bool isDisplay()
-	{
-		return display;
-	}
-	void setIsDisplayed(const bool& d)
-	{
-		display = d;
-	}
-	Q_PROPERTY(bool env READ isEnv WRITE setIsEnv)
-	bool isEnv()
-	{
-		return env;
-	}
-	void setIsEnv(const bool& e)
-	{
-		env = e;
-	}
-	Q_PROPERTY(int id READ getId WRITE setId)
-	int getId()
-	{
-		return id;
-	}
-	void setId(const int& i)
-	{
-		id = i;
-	}
-	Q_PROPERTY(double x READ getX WRITE setX)
-	double getX()
-	{
-		return x;
-	}
-	void setX(const double& i)
-	{
-		x = i;
-	}
-	Q_PROPERTY(double y READ getY WRITE setY)
-	double getY()
-	{
-		return y;
-	}
-	void setY(const double& i)
-	{
-		y = i;
-	}
-	Q_PROPERTY(double ex READ getEx WRITE setEx)
-		double getEx()
-	{
-		return ex;
-	}
-	void setEx(const double& i)
-	{
-		ex = i;
-	}
-	Q_PROPERTY(double ey READ getEy WRITE setEy)
-	double getEy()
-	{
-		return ey;
-	}
-	void setEy(const double& i)
-	{
-		ey = i;
-	}
-	Q_PROPERTY(double width READ getWidth WRITE setWidth)
-		double getWidth()
-	{
-		return width;
-	}
-	void setWidth(const double& i)
-	{
-		width = i;
-	}
-	Q_PROPERTY(double height READ getHeight WRITE setHeight)
-		double getHeight()
-	{
-		return height;
-	}
-	void setHeight(const double& i)
-	{
-		height = i;
-	}
-	Q_PROPERTY(bool editing READ isEditing WRITE setIsEditing)
-		bool isEditing()
-	{
-		return editing;
-	}
-	void setIsEditing(const bool& e)
-	{
-		editing = e;
-	}
-	Q_PROPERTY(int red READ getRed WRITE setRed)
-		int getRed()
-	{
-		return red;
-	}
-	void setRed(const int& i)
-	{
-		red = i;
-	}
-	Q_PROPERTY(int green READ getGreen WRITE setGreen)
-	int getGreen()
-	{
-		return green;
-	}
-	void setGreen(const int& i)
-	{
-		green = i;
-	}
-	Q_PROPERTY(int blue READ getBlue WRITE setBlue)
-	int getBlue()
-	{
-		return blue;
-	}
-	void setBlue(const int& i)
-	{
-		blue = i;
-	}
-	Q_PROPERTY(ShapeType type READ getType WRITE setType)
-	ShapeType getType()
-	{
-		return type;
-	}
-	void setType(const ShapeType& i)
-	{
-		type = i;
-	}
-	cv::Rect toCvRect()
-	{
-		return cv::Rect(std::floor(x), std::floor(y), std::floor(width), std::floor(height));
-	}
-	QRect toQRect()
-	{
-		return QRect(std::floor(x), std::floor(y), std::floor(width), std::floor(height));
-	}
-	void fromQRect(const QRect & r)
-	{
-		x = r.x();
-		y = r.y();
-		width = r.width();
-		height = r.height();
-	}
-	void fromCvRect(const cv::Rect & r)
-	{
-		x = r.x;
-		y = r.y;
-		width = r.width;
-		height = r.height;
-	}
-	bool isInBox(const QPoint & p)
-	{
-		bool out(false);
-		if (type == Rect || type == Circle)
-		{
-			out = p.x() >= x && p.x() <= (x + width) && p.y() >= y && p.y() <= (y + height);
-		}
-		else if (type == Line)
-		{
-			double k = (double(ey) - double(y)) / (double(ex) - double(x));
-			out = ((std::abs(k * double(p.x()) - double(p.y()) + (y - k * x)) / sqrt(k * k + 1.)) < 5.) && p.x() - 5 >= x&& p.x() + 5. <= ex;
-		}
-		else
-		{
-			out = std::abs(p.x() - x) < 5 && std::abs(p.x() - x) < 5;
-		}
-		return out;
-	}
-	QColor toQColor()
-	{
-		return QColor(red, green, blue);
-	}
-	void fromQColor(const QColor & c)
-	{
-		red = c.red();
-		blue = c.blue();
-		green = c.green();
-	}
-	void fromQLine(const QLine & line)
-	{
-		x = line.x1();
-		y = line.y1();
-		ex = line.x2();
-		ey = line.y2();
-	}
-	QLine toQLine()
-	{
-		return QLine(std::floor(x), std::floor(y), std::floor(ex), std::floor(ey));
-	}
-	void fromQPoint(const QPoint & pnt)
-	{
-		x = pnt.x();
-		y = pnt.y();
-	}
-	QPoint toQPoint()
-	{
-		return QPoint(std::floor(x), std::floor(y));
-	}
+	QPen pen;
+	QBrush brush;
+	QPen editingPen;
+	QBrush editingBrush;
 };
-Q_DECLARE_METATYPE(ImageBox)
+Q_DECLARE_METATYPE(RectImageBox)
 
-class PaintData
+class IMAGEWIDGET_EXPORT EllipseImageBox : public RectImageBox
+{
+	Q_OBJECT
+signals:
+public:
+	Q_INVOKABLE EllipseImageBox(QObject* parent = nullptr);
+	Q_INVOKABLE EllipseImageBox(
+		const double& x,
+		const double& y,
+		const double& width,
+		const double& height,
+		const QPen& pen = QPen(QColor(0, 0, 255)),
+		const QBrush& brush = QBrush(QColor(0, 0, 255, 0.2), Qt::BrushStyle::SolidPattern),
+		const QString& name = "default",
+		const int& id = -1,
+		const bool& display = true,
+		const bool& env = false,
+		QObject* parent = nullptr);
+	Q_INVOKABLE EllipseImageBox(const EllipseImageBox& other);
+	void operator=(const EllipseImageBox& rb);
+	~EllipseImageBox();
+	Q_INVOKABLE virtual cv::Mat getMask(const QSize&) override;
+protected:
+	virtual void paintShape(QPainter*, ImageWidgetBasePrivate*) override;
+};
+Q_DECLARE_METATYPE(EllipseImageBox)
+
+class IMAGEWIDGET_EXPORT PaintData
 {
 public:
 	std::vector<std::tuple<cv::Point2d, cv::Point2d, int, cv::Scalar>> lines;
 	std::vector<std::tuple<cv::Rect2d, int, cv::Scalar>> rects;
 	std::vector<std::tuple<cv::Rect2d, int, cv::Scalar>> circles;
-	void drawDatas(cv::Mat& mat);
+	std::vector<std::tuple<std::string,cv::Point2d,int,std::string,cv::Scalar>> texts;
+	std::vector<std::tuple<cv::Point2d, int,int, cv::Scalar>> corss_lines;
+	void drawDatas(cv::Mat& mat) const;
 	void paintDatas(QPainter*, ImageWidgetBasePrivate*);
+	PaintData& operator<<(PaintData&);
 };
 Q_DECLARE_METATYPE(PaintData)
-
-class ImageWidgetBase : public 
+Q_DECLARE_METATYPE(cv::Mat)
+class IMAGEWIDGET_EXPORT ImageWidgetBase : public
 #ifdef IMAGEWIDGET_QML
 	QQuickPaintedItem
 #else
@@ -342,25 +223,25 @@ class ImageWidgetBase : public
 #endif // IMAGEWIDGET_QML
 {
 	Q_OBJECT
-	Q_DISABLE_COPY(ImageWidgetBase)
+		Q_DISABLE_COPY(ImageWidgetBase)
 public:
 #ifdef IMAGEWIDGET_QML
 	ImageWidgetBase(QQuickItem* parent = Q_NULLPTR);
 #else
-	ImageWidgetBase(QWidget *parent = Q_NULLPTR);
+	ImageWidgetBase(QWidget* parent = Q_NULLPTR);
 #endif
-	~ImageWidgetBase();
+	virtual ~ImageWidgetBase();
 public slots:
 	;
-	void displayCVMat(const cv::Mat&);
+	void displayCVMat(cv::Mat);
 	void displayQImage(const QImage&);
 	void displayCVMatWithData(const cv::Mat&, const PaintData&);
 	void displayQImageWithData(const QImage&, const PaintData&);
 	void displayDoneCVMat(const cv::Mat&);
 	void displayDoneQImage(const QImage&);
-	void displayDoneCVMatWithData(const cv::Mat&,const PaintData&);
+	void displayDoneCVMatWithData(const cv::Mat&, const PaintData&);
 	void displayDoneQImageWithData(const QImage&, const PaintData&);
-	void displayCVMat(const QVariant& img);
+	void displayCVMat(QVariant);
 	void displayQImage(const QVariant& img);
 	void displayCVMatWithData(const QVariant& img, const QVariant& paint_data);
 	void displayQImageWithData(const QVariant& img, const QVariant& paint_data);
@@ -368,6 +249,8 @@ public slots:
 	void displayDoneQImage(const QVariant& img);
 	void displayDoneCVMatWithData(const QVariant& img, const QVariant& paint_data);
 	void displayDoneQImageWithData(const QVariant& img, const QVariant& paint_data);
+	void resetScale();
+	void setBackgroudColor(const QColor&);
 signals:
 	void clickedPosition(QPoint);
 	void underMouseSourcePosition(QPoint);
@@ -379,31 +262,39 @@ protected:
 	virtual void mouseDoubleClickEvent(QMouseEvent*) override;
 #ifdef IMAGEWIDGET_QML
 	virtual void paint(QPainter* painter) override;
+	void onWidthChanged();
+	void onHeightChanged();
 #else
+	virtual void resizeEvent(QResizeEvent*) override;
 	virtual void paintEvent(QPaintEvent*) override;
 #endif
 	virtual void wheelEvent(QWheelEvent*) override;
-	ImageWidgetBasePrivate *d;
+	ImageWidgetBasePrivate* d;
 };
 
-class ImageWidget : public ImageWidgetBase
+class IMAGEWIDGET_EXPORT ImageWidget : public ImageWidgetBase
 {
 	Q_OBJECT
-	Q_DISABLE_COPY(ImageWidget)
+		Q_DISABLE_COPY(ImageWidget)
 public:
 #ifdef IMAGEWIDGET_QML
 	ImageWidget(QQuickItem* parent = Q_NULLPTR);
 #else
-	ImageWidget(QWidget *parent = Q_NULLPTR);
+	ImageWidget(QWidget* parent = Q_NULLPTR);
 #endif
 
-	~ImageWidget();
+	virtual ~ImageWidget();
 public slots:
-	bool addImageBox(const ImageBox&);
-	bool paintNewImageBox(const ImageBox::ShapeType& type = ImageBox::Rect,const QString& name = "default",const QColor& color = QColor(0, 0, 255), const int& id = -1, const bool& display = true);
-	bool addImageBox(const ImageBox::ShapeType& type = ImageBox::Rect,const QString& name = "default", const int& = 0, const int& = 0, const int& = 0, const int& = 0, const QColor& color = QColor(0, 0, 255), const int& id = -1, const bool& display = true);
-	bool getImageBoxFromId(const int&,ImageBox&);
-	std::vector<ImageBox> getImageBoxsFromName(const QString&);
+	void paintNewImageBox(QVariant box);
+	void addImageBox(QVariant box);
+	void paintNewImageBox(ImageBox* box);
+	void addImageBox(ImageBox* box);
+	void removeImageBoxById(const int& id);
+	void removeImageBoxByName(const QString& name);
+	ImageBox* getImageBoxFromId(const int& id);
+	QVariant getImageBoxVarFromId(const int& id);
+	QList<ImageBox*> ImageWidget::getImageBoxsFromName(const QString& name);
+	QVariantList ImageWidget::getImageBoxVarlistFromName(const QString& name);
 	void clearAllBoxs();
 protected:
 	virtual void mousePressEvent(QMouseEvent*) override;
@@ -420,5 +311,12 @@ protected:
 	virtual void contextMenuEvent(QContextMenuEvent*) override;
 #endif
 private:
-	ImageWidgetPrivate *d_ptr;
+	ImageWidgetPrivate* d_ptr;
 };
+
+#ifdef IMAGEWIDGET_QML
+QML_DECLARE_TYPE(ImageWidget)
+QML_DECLARE_TYPE(ImageWidgetBase)
+QML_DECLARE_TYPE(RectImageBox)
+QML_DECLARE_TYPE(EllipseImageBox)
+#endif

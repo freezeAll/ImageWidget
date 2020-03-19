@@ -4,12 +4,12 @@
 #include "ImageWidget.hxx"
 
 class ROIDialogPrivate;
-class ROIDialog : public QDialog
+class IMAGEWIDGET_EXPORT ROIDialog : public QDialog
 {
 	Q_OBJECT
 
 public:
-	ROIDialog(cv::Mat,ImageBox&,const double&,QWidget *parent = nullptr);
+	ROIDialog(cv::Mat,ImageBox*,const double&,const bool& paint,QWidget *parent = nullptr);
 	~ROIDialog();
 private:
 	ROIDialogPrivate * d;

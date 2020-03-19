@@ -7,24 +7,24 @@ class ROIDialogPrivate : public QObject
 {
 	Q_OBJECT
 public:
-	ROIDialogPrivate(cv::Mat s,ImageBox& ib,ROIDialog * parent) :
+	ROIDialogPrivate(cv::Mat s,ImageBox* ib,ROIDialog* parent) :
 		q(parent),
 		src(s),
 		rtn_box(ib)
 	{
-		old_id = ib.id;
+		old_id = ib->getBoxID();
 	}
 private:
 	friend class ROIDialog;
 	cv::Mat src;
-	ImageBox& rtn_box;
+	ImageBox* rtn_box;
 	ROIDialog* q;
 	int old_id;
 	ImageWidget* iw_ptr;
 };
 
 
-ROIDialog::ROIDialog(cv::Mat src, ImageBox& ib, const double& sc, QWidget *parent)
+ROIDialog::ROIDialog(cv::Mat src, ImageBox* ib, const double& sc,const bool& pt, QWidget *parent)
 	: QDialog(parent),
 	d(new ROIDialogPrivate(src,ib,this))
 {
@@ -55,13 +55,13 @@ ROIDialog::ROIDialog(cv::Mat src, ImageBox& ib, const double& sc, QWidget *paren
 	ptr->setGeometry(0, 0, src.cols * roidialog_scale, src.rows * roidialog_scale);
 	this->setFixedSize(QSize(src.cols * roidialog_scale + 80, src.rows * roidialog_scale));
 	ptr->displayCVMat(src);
-	if (ib.width == 0 || ib.height == 0)
+	if (pt)
 	{
-		ptr->paintNewImageBox(ib.type,ib.name, ib.toQColor(), 1, true);
+		ptr->paintNewImageBox(ib);
 	}
 	else
 	{
-		ib.id = 1;
+		ib->setBoxID(1);
 		ptr->addImageBox(ib);
 	}
 	auto okbtn_ptr = new QPushButton("OK", this);
@@ -72,18 +72,21 @@ ROIDialog::ROIDialog(cv::Mat src, ImageBox& ib, const double& sc, QWidget *paren
 	reset_ptr->setGeometry(src.cols * roidialog_scale, 100, 80, 40);
 
 	connect(okbtn_ptr, &QPushButton::clicked, this, [this]() {
-		ImageBox out;
-		d->iw_ptr->getImageBoxFromId(1,out);
-		out.id = d->old_id;
-		d->rtn_box = out;
+		ImageBox* out = d->iw_ptr->getImageBoxFromId(1);
+		;
+		out->setBoxID(d->old_id);
+		*(d->rtn_box) = *out;
 		accept();
 	});
 	connect(cancel_ptr, &QPushButton::clicked, this, [this]() {
 		reject();
 	});
 	connect(reset_ptr, &QPushButton::clicked, this, [this]() {
+		auto new_box = static_cast<ImageBox*>(d->rtn_box->metaObject()->newInstance());
+		*new_box = *(d->rtn_box);
+		new_box->resetData();
 		d->iw_ptr->clearAllBoxs();
-		d->iw_ptr->paintNewImageBox(d->rtn_box.type,d->rtn_box.name, d->rtn_box.toQColor(), 1, true);
+		d->iw_ptr->paintNewImageBox(new_box);
 		});
 }
 

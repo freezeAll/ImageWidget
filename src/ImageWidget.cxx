@@ -3,7 +3,12 @@
 #include <QMouseEvent>
 #include <QLinkedList>
 #include <QPainter>
+#ifndef IMAGEWIDGET_QML
 #include <QMenu>
+#include <QFileDialog>
+#include <QMessageBox>
+#endif
+const int grabedge_thresh = 3;
 
 class ImageWidgetBasePrivate : public QObject
 {
@@ -13,7 +18,8 @@ public:
 		q_ptr(parent),
 		done_flag(false),
 		log_zoom(1.),
-		moving(false)
+		moving(false),
+		backgroudcolor(125,125,125)
 	{
 		connect(&done_timer, &QTimer::timeout, this, &ImageWidgetBasePrivate::doneImageTimerTimeout);
 	}
@@ -29,13 +35,19 @@ private:
 	QTimer done_timer;
 	bool done_flag;
 	double log_zoom;
-	QPoint start_point;
+	QPointF start_point;
 	QPointF source_position;
 	QSizeF source_size;
 	bool moving;
 	PaintData done_paint_data;
 	PaintData paint_data;
+	QColor backgroudcolor;
 public:
+	double getLogZoom()
+	{
+		return log_zoom;
+	}
+
 	QSize getImageSize()
 	{
 		if (done_flag)
@@ -48,10 +60,11 @@ public:
 		}
 	}
 
-	QImage cvMatToQImage(const cv::Mat &m, bool is_done = false)
+	QImage cvMatToQImage(const cv::Mat& m, bool is_done = false)
 	{
 		if (is_done)
 		{
+			rgb_done.release();
 			switch (m.channels())
 			{
 			case 1:
@@ -69,6 +82,7 @@ public:
 			return QImage(rgb_done.data, rgb_done.cols, rgb_done.rows, rgb_done.step, QImage::Format::Format_RGB888);
 		}
 		else {
+			rgb.release();
 			switch (m.channels())
 			{
 			case 1:
@@ -105,7 +119,7 @@ public:
 	{
 		return (getXPower() + getYPower()) / 2.;
 	}
-	void zoomIn(QWheelEvent *e)
+	void zoomIn(QWheelEvent* e)
 	{
 		auto m = e->posF();
 
@@ -126,7 +140,7 @@ public:
 		source_size *= 0.95;
 		q_ptr->update();
 	}
-	void zoomOut(QWheelEvent *e)
+	void zoomOut(QWheelEvent* e)
 	{
 		auto m = e->posF();
 
@@ -164,43 +178,7 @@ public:
 		QPointF vec = end_point - start_point;
 		vec.setX(vec.x() * (source_size.width() / q_ptr->width()));
 		vec.setY(vec.y() * (source_size.height() / q_ptr->height()));
-		if (box.type == ImageBox::Rect || box.type == ImageBox::Circle)
-		{
-			if ((box.x + vec.x()) <= (display_img.width() - box.width) && (box.x + vec.x() >= 0))
-			{
-				box.x += vec.x();
-			}
-			if ((box.y + vec.y()) <= (display_img.height() - box.height) && (box.y + vec.y() >= 0))
-			{
-				box.y += vec.y();
-			}
-		}
-		else if(box.type == ImageBox::Line)
-		{
-			if ((box.x + vec.x()) <= display_img.width() && (box.x + vec.x() >= 0) && 
-				(box.ex + vec.x()) <= display_img.width() && (box.ex + vec.x() >= 0))
-			{
-				box.x += vec.x();
-				box.ex += vec.x();
-			}
-			if ((box.y + vec.y()) <= display_img.height()  && (box.y + vec.y() >= 0) && 
-				(box.ey + vec.y()) <= display_img.height() && (box.ey + vec.y() >= 0))
-			{
-				box.y += vec.y();
-				box.ey += vec.y();
-			}
-		}
-		else if (box.type == ImageBox::Point)
-		{
-			if ((box.x + vec.x()) <= display_img.width() && (box.x + vec.x() >= 0))
-			{
-				box.x += vec.x();
-			}
-			if ((box.y + vec.y()) <= display_img.height() && (box.y + vec.y() >= 0))
-			{
-				box.y += vec.y();
-			}
-		}
+		box.moveBox(vec,getImageSize());
 	}
 
 	template <typename T, typename Y>
@@ -225,10 +203,10 @@ public:
 		return rtn;
 	}
 
-	template <typename T,typename Y>
+	template <typename T, typename Y>
 	T getImageRect(const Y& rt)
 	{
-		auto tl = getImagePosition<decltype(rt.topLeft())>( rt.topLeft());
+		auto tl = getImagePosition<decltype(rt.topLeft())>(rt.topLeft());
 		auto br = getImagePosition<decltype(rt.bottomRight())>(rt.bottomRight());
 		T rtn;
 		rtn.setTopLeft(tl);
@@ -247,7 +225,7 @@ public:
 		return rtn;
 	}
 
-	template<typename T,typename Y>
+	template<typename T, typename Y>
 	T getPaintPosition(const Y& rt)
 	{
 		auto tmp_img = &(done_flag ? display_img_done : display_img);
@@ -260,7 +238,21 @@ public:
 		{
 			power = float(q_ptr->height()) / float(source_size.height());
 		}
-		return T((float(rt.x())  - float(source_position.x())) * power,(float(rt.y())  - float(source_position.y())) * power);
+		return T((float(rt.x()) - float(source_position.x())) * power, (float(rt.y()) - float(source_position.y())) * power);
+	}
+	double getPower()
+	{
+		auto tmp_img = &(done_flag ? display_img_done : display_img);
+		float power(1.f);
+		if (tmp_img->width() > tmp_img->height())
+		{
+			power = float(q_ptr->width()) / float(source_size.width());
+		}
+		else
+		{
+			power = float(q_ptr->height()) / float(source_size.height());
+		}
+		return power;
 	}
 
 	template <typename T, typename Y>
@@ -285,13 +277,15 @@ ImageWidgetBase::ImageWidgetBase(
 	QQuickItem* parent)
 	: QQuickPaintedItem(parent),
 #else
-	QWidget *parent)
+QWidget* parent)
 	: QWidget(parent),
 #endif // QIMAGEWIDGET_QML
 	d(new ImageWidgetBasePrivate(this))
 {
 #ifdef IMAGEWIDGET_QML
 	setAcceptedMouseButtons(Qt::LeftButton | Qt::RightButton);
+	connect(this, &ImageWidgetBase::widthChanged, this, &ImageWidgetBase::onWidthChanged);
+	connect(this, &ImageWidgetBase::heightChanged, this, &ImageWidgetBase::onHeightChanged);
 #endif // IMAGEWIDGET_QML
 
 }
@@ -300,9 +294,14 @@ ImageWidgetBase::~ImageWidgetBase()
 {
 	delete d;
 }
-
-void ImageWidgetBase::displayCVMat(const cv::Mat & img)
+#include <fstream>
+void ImageWidgetBase::displayCVMat(cv::Mat img)
 {
+	if (img.empty())
+	{
+		return;
+	}
+
 	if (d->display_img.size() != QSize(img.cols, img.rows))
 	{
 		QPoint src_pnt;
@@ -329,12 +328,19 @@ void ImageWidgetBase::displayCVMat(const cv::Mat & img)
 		d->source_position = src_pnt;
 		d->source_size = src_size;
 	}
-	d->display_img = QPixmap::fromImage(d->cvMatToQImage(img));
+	d->display_img.detach();
+	auto qimg = d->cvMatToQImage(img);
+	d->display_img = QPixmap::fromImage(qimg);
+	qimg.detach();
 	update();
 }
 
-void ImageWidgetBase::displayQImage(const QImage & img)
+void ImageWidgetBase::displayQImage(const QImage& img)
 {
+	if (img.byteCount() == 0)
+	{
+		return;
+	}
 	if (d->display_img.size() != img.size())
 	{
 		QPoint src_pnt;
@@ -362,7 +368,7 @@ void ImageWidgetBase::displayQImage(const QImage & img)
 		d->source_size = src_size;
 	}
 
-	d->display_img = QPixmap::fromImage(img.copy(QRect(0,0,img.width(),img.height())));
+	d->display_img = QPixmap::fromImage(img.copy(QRect(0, 0, img.width(), img.height())));
 	update();
 }
 
@@ -378,24 +384,74 @@ void ImageWidgetBase::displayQImageWithData(const QImage& img, const PaintData& 
 	displayQImage(img);
 }
 
-void ImageWidgetBase::displayDoneCVMat(const cv::Mat & img)
+void ImageWidgetBase::displayDoneCVMat(const cv::Mat& img)
 {
+	if (img.empty())
+	{
+		return;
+	}
 	if (d->display_img_done.size() != QSize(img.cols, img.rows))
 	{
-		d->source_position = QPoint(0, 0);
-		d->source_size = QSize(img.cols, img.rows);
+		QPoint src_pnt;
+		QSize src_size;
+		if (img.cols > img.rows)
+		{
+			float power = float(img.cols) / float(width());
+			auto w = float(height()) * power;
+			src_pnt.setY(-(w - float(img.rows)) / 2.);
+			src_pnt.setX(0);
+			src_size.setWidth(img.cols);
+			src_size.setHeight(w);
+		}
+		else
+		{
+			float power = float(img.rows) / float(height());
+			auto h = float(width()) * power;
+			src_pnt.setY(0);
+			src_pnt.setX(-(h - float(img.cols)) / 2.);
+			src_size.setWidth(h);
+			src_size.setHeight(img.rows);
+
+		}
+		d->source_position = src_pnt;
+		d->source_size = src_size;
 	}
-	d->display_img_done = QPixmap::fromImage(d->cvMatToQImage(img,true));
+	d->display_img_done = QPixmap::fromImage(d->cvMatToQImage(img, true));
 	d->startDoneImageTimer();
 	update();
 }
 
-void ImageWidgetBase::displayDoneQImage(const QImage & img)
+void ImageWidgetBase::displayDoneQImage(const QImage& img)
 {
+	if (img.byteCount() == 0)
+	{
+		return;
+	}
 	if (d->display_img_done.size() != img.size())
 	{
-		d->source_position = QPoint(0, 0);
-		d->source_size = img.size();
+		QPoint src_pnt;
+		QSize src_size;
+		if (img.width() > img.height())
+		{
+			float power = float(img.width()) / float(width());
+			auto w = float(height()) * power;
+			src_pnt.setY(-(w - float(img.height())) / 2.);
+			src_pnt.setX(0);
+			src_size.setWidth(img.width());
+			src_size.setHeight(w);
+		}
+		else
+		{
+			float power = float(img.height()) / float(height());
+			auto h = float(width()) * power;
+			src_pnt.setY(0);
+			src_pnt.setX(-(h - float(img.width())) / 2.);
+			src_size.setWidth(h);
+			src_size.setHeight(img.height());
+
+		}
+		d->source_position = src_pnt;
+		d->source_size = src_size;
 	}
 	d->display_img_done = QPixmap::fromImage(img.copy(QRect(0, 0, img.width(), img.height())));
 	d->startDoneImageTimer();
@@ -414,7 +470,7 @@ void ImageWidgetBase::displayDoneQImageWithData(const QImage& img, const PaintDa
 	displayDoneQImage(img);
 }
 
-void ImageWidgetBase::displayCVMat(const QVariant& img)
+void ImageWidgetBase::displayCVMat(QVariant img)
 {
 	if (img.canConvert<cv::Mat>())
 	{
@@ -474,38 +530,11 @@ void ImageWidgetBase::displayDoneQImageWithData(const QVariant& img, const QVari
 {
 	if (img.canConvert<QImage>() && paint_data.canConvert<PaintData>())
 	{
-		displayDoneQImageWithData(img.value<QImage>(),paint_data.value<PaintData>());
+		displayDoneQImageWithData(img.value<QImage>(), paint_data.value<PaintData>());
 	}
 }
 
-void ImageWidgetBase::mousePressEvent(QMouseEvent *e)
-{
-	d->moving = true;
-	d->start_point = e->pos();
-	update();
-}
-
-void ImageWidgetBase::mouseMoveEvent(QMouseEvent *e)
-{
-	if (!d->moving)
-		return;
-	auto m = e->pos();
-	auto vec = m - d->start_point;
-	vec.setX(vec.x() * (d->source_size.width() / width()));
-	vec.setY(vec.y() * (d->source_size.height() / height()));
-	d->source_position.setX(d->source_position.x() - vec.x());
-	d->source_position.setY(d->source_position.y() - vec.y());
-	d->start_point = m;
-	update();
-}
-
-void ImageWidgetBase::mouseReleaseEvent(QMouseEvent *e)
-{
-	d->moving = false;
-	emit clickedPosition(d->getImagePosition<QPoint>(e->pos()));
-}
-
-void ImageWidgetBase::mouseDoubleClickEvent(QMouseEvent* e)
+void ImageWidgetBase::resetScale()
 {
 	QPoint src_pnt;
 	QSize src_size;
@@ -532,7 +561,64 @@ void ImageWidgetBase::mouseDoubleClickEvent(QMouseEvent* e)
 	d->source_position = src_pnt;
 	d->source_size = src_size;
 	update();
+
 }
+
+void ImageWidgetBase::setBackgroudColor(const QColor& c)
+{
+	d->backgroudcolor = c;
+	update();
+}
+
+void ImageWidgetBase::mousePressEvent(QMouseEvent* e)
+{
+	d->moving = true;
+	d->start_point = e->pos();
+	update();
+}
+
+void ImageWidgetBase::mouseMoveEvent(QMouseEvent* e)
+{
+	if (!d->moving)
+		return;
+	auto m = QPointF(e->pos().x(),e->pos().y());
+	auto vec = m - d->start_point;
+	vec.setX(vec.x() * (d->source_size.width() / width()));
+	vec.setY(vec.y() * (d->source_size.height() / height()));
+	d->source_position.setX(d->source_position.x() - vec.x());
+	d->source_position.setY(d->source_position.y() - vec.y());
+	d->start_point = m;
+	update();
+}
+
+void ImageWidgetBase::mouseReleaseEvent(QMouseEvent* e)
+{
+	d->moving = false;
+	emit clickedPosition(d->getImagePosition<QPoint>(e->pos()));
+}
+
+void ImageWidgetBase::mouseDoubleClickEvent(QMouseEvent* e)
+{
+	resetScale();
+}
+#ifdef IMAGEWIDGET_QML
+void ImageWidgetBase::onWidthChanged()
+{
+	resetScale();
+}
+
+void ImageWidgetBase::onHeightChanged()
+{
+	resetScale();
+}
+#endif
+#ifndef IMAGEWIDGET_QML
+void ImageWidgetBase::resizeEvent(QResizeEvent* e)
+{
+	QWidget::resizeEvent(e);
+	resetScale();
+}
+#endif
 
 #ifdef IMAGEWIDGET_QML
 void ImageWidgetBase::paint(QPainter* painter)
@@ -547,25 +633,25 @@ void ImageWidgetBase::paintEvent(QPaintEvent* e)
 	QPainter* painter_ptr = &painter_obj;
 	painter_ptr->begin(this);
 #endif
-	painter_ptr->setBrush(QBrush(QColor(125, 125, 125)));
-	painter_ptr->setPen(QPen(QColor(125, 125, 125)));
-	painter_ptr->drawRect(QRect(0, 0, width(),height()));
+	painter_ptr->setBrush(QBrush(d->backgroudcolor));
+	painter_ptr->setPen(QPen(d->backgroudcolor));
+	painter_ptr->drawRect(QRect(0, 0, width(), height()));
 	auto tmp_img = &(d->done_flag ? d->display_img_done : d->display_img);
 
 	painter_ptr->drawPixmap(QRectF(0, 0, width(), height()), *tmp_img, QRectF(d->source_position, d->source_size));
-	(d->done_flag ? d->done_paint_data : d->paint_data).paintDatas(painter_ptr,d);
+	(d->done_flag ? d->done_paint_data : d->paint_data).paintDatas(painter_ptr, d);
 #ifndef IMAGEWIDGET_QML
 	painter_ptr->end();
 #endif
 }
 
-void ImageWidgetBase::wheelEvent(QWheelEvent * e)
+void ImageWidgetBase::wheelEvent(QWheelEvent* e)
 {
 	if (e->delta() > 0)
 	{
 		d->zoomIn(e);
 	}
-	else if(e->delta() < 0)
+	else if (e->delta() < 0)
 	{
 		d->zoomOut(e);
 	}
@@ -575,25 +661,12 @@ class ImageWidgetPrivate : public QObject
 {
 	Q_OBJECT
 public:
-	enum GrabedEdgeType
-	{
-		None,
-		Top,
-		Bottom,
-		Left,
-		Right,
-		TopLeft,
-		TopRight,
-		BottomLeft,
-		BottomRight
-	};
 	ImageWidgetPrivate(ImageWidget* parent) :
 		q_ptr(parent),
 		grabed_box_ptr(nullptr),
 		is_painting(false),
 		grabed_obj(false),
-		grabed_edge(false),
-		grabedge_thresh(3)
+		grabed_edge(false)
 	{
 
 	}
@@ -603,31 +676,16 @@ public:
 	}
 	void normalizeAllBox()
 	{
-		for (auto &a : box_list)
+		for (auto& a : box_list)
 		{
-			if (a.type == ImageBox::Point)
-			{
-				continue;
-			}
-			else if(a.type == ImageBox::Line)
-			{
-				if (a.ex < a.x)
-				{
-					std::swap(a.ex, a.x);
-					std::swap(a.ey, a.y);
-				}
-			}
-			else
-			{
-				a.fromQRect(a.toQRect().normalized());
-			}
+			a->normalize();
 		}
 	}
 	void resetBoxEditing()
 	{
-		for (auto &a : box_list)
+		for (auto& a : box_list)
 		{
-			a.editing = false;
+			a->setEditing(false);
 		}
 	}
 
@@ -635,258 +693,55 @@ public:
 	{
 		if (box_list.empty())
 			return;
-		if (!box_list.begin()->editing)
+		if (!(*box_list.begin())->getEditing())
 			return;
-		double thresh = grabedge_thresh * power;
-		//点和线
-		if (box_list.begin()->type == ImageBox::Point || box_list.begin()->type == ImageBox::Line)
-		{
-			QPointF judge_pnt1, judge_pnt2;
-			switch (box_list.begin()->type)
-			{
-			case ImageBox::Point:
-				judge_pnt1 = box_list.begin()->toQPoint();
-				judge_pnt2 = judge_pnt1;
-				break;
-			case ImageBox::Line:
-				judge_pnt1 = box_list.begin()->toQLine().p1();
-				judge_pnt2 = box_list.begin()->toQLine().p2();
-				break;
-			default:
-				break;
-			}
-			if (std::abs(judge_pnt1.x() - p.x()) <= thresh && std::abs(judge_pnt1.y() - p.y()) <= thresh)
-			{
-				grabed_type = TopLeft;
-				grabed_edge = true;
-			}
-			if (std::abs(judge_pnt2.x() - p.x()) <= thresh && std::abs(judge_pnt2.y() - p.y()) <= thresh)
-			{
-				grabed_type = BottomRight;
-				grabed_edge = true;
-			}
 
-
-			return;
-		}
-		//圆和矩形
-		auto tmp_rt = box_list.begin()->toQRect();
-		if (std::abs(tmp_rt.left() - p.x()) < thresh)
+		auto rtn = (*box_list.begin())->checkPress(p, power);
+		if (rtn.has_value())
 		{
-			grabed_type = Left;
+			grabed_type = rtn.value();
 			grabed_edge = true;
 		}
-		if (std::abs(tmp_rt.right() - p.x()) < thresh)
+		else
 		{
-			grabed_type = Right;
-			grabed_edge = true;
-		}
-		if (std::abs(tmp_rt.top() - p.y()) < thresh)
-		{
-			grabed_type = Top;
-			grabed_edge = true;
-		}
-		if (std::abs(tmp_rt.bottom() - p.y()) < thresh)
-		{
-			grabed_type = Bottom;
-			grabed_edge = true;
-		}
-		if (grabed_edge)
-		{
-			QPoint p1;
-			QPoint p2;
-			switch (grabed_type)
-			{
-			case ImageWidgetPrivate::Top:
-				p1 = tmp_rt.topLeft() - p;
-				p2 = tmp_rt.topRight() - p;
-				if (std::abs(p1.x()) <= thresh && std::abs(p1.y()) <= thresh)
-				{
-					grabed_type = TopLeft;
-				}
-				if (std::abs(p2.x()) <= thresh && std::abs(p2.y()) <= thresh)
-				{
-					grabed_type = TopRight;
-				}
-				break;
-			case ImageWidgetPrivate::Bottom:
-				p1 = tmp_rt.topLeft() - p;
-				p2 = tmp_rt.topRight() - p;
-				if (std::abs(p1.x()) <= thresh && p1.y() <= thresh)
-				{
-					grabed_type = BottomLeft;
-				}
-				if (std::abs(p2.x()) <= thresh && p2.y() <= thresh)
-				{
-					grabed_type = BottomRight;
-				}
-				break;
-			case ImageWidgetPrivate::Left:
-				p1 = tmp_rt.topLeft() - p;
-				p2 = tmp_rt.bottomLeft() - p;
-				if (std::abs(p1.x()) <= thresh && std::abs(p1.y()) <= thresh)
-				{
-					grabed_type = TopLeft;
-				}
-				if (std::abs(p2.x()) <= thresh && std::abs(p2.y()) <= thresh)
-				{
-					grabed_type = BottomLeft;
-				}
-				break;
-			case ImageWidgetPrivate::Right:
-				p1 = tmp_rt.topLeft() - p;
-				p2 = tmp_rt.bottomLeft() - p;
-				if (std::abs(p1.x()) <= thresh && std::abs(p1.y()) <= thresh)
-				{
-					grabed_type = TopRight;
-				}
-				if (std::abs(p2.x()) <= thresh && std::abs(p2.y()) <= thresh)
-				{
-					grabed_type = BottomRight;
-				}
-				break;
-			default:
-				break;
-			}
+			grabed_edge = false;
 		}
 	}
 	bool checkMove(const QPoint& p, const double& power)
 	{
 		if (box_list.empty())
 			return false;
-		if (!box_list.begin()->editing)
+		if (!(*box_list.begin())->getEditing())
 			return false;
-		bool undermouse(false);
-		double thresh = grabedge_thresh * power;
-		auto tmp_rt = box_list.begin()->toQRect();
-		if (box_list.begin()->type == ImageBox::Point || box_list.begin()->type == ImageBox::Line)
+		auto val = (*box_list.begin())->checkMove(p, power);
+		if (val.has_value())
 		{
-			QPoint judge_pnt1, judge_pnt2;
-			switch (box_list.begin()->type)
-			{
-			case ImageBox::Point:
-				judge_pnt1 = box_list.begin()->toQPoint();
-				judge_pnt2 = judge_pnt1;
-				break;
-			case ImageBox::Line:
-				judge_pnt1 = box_list.begin()->toQLine().p1();
-				judge_pnt2 = box_list.begin()->toQLine().p2();
-				break;
-			default:
-				break;
-			}
-			if (std::abs(judge_pnt1.x() - p.x()) <= thresh && std::abs(judge_pnt1.y() - p.y()) <= thresh)
-			{
-				grabed_type = TopLeft;
-				undermouse = true;
-			}
-			if (std::abs(judge_pnt2.x() - p.x()) <= thresh && std::abs(judge_pnt2.y() - p.y()) <= thresh)
-			{
-				grabed_type = BottomRight;
-				undermouse = true;
-			}
-			return undermouse;
+			grabed_type = val.value();
+			return true;
 		}
-
-		if (abs(tmp_rt.left() - p.x()) < thresh)
+		else
 		{
-			undermouse = true;
-			grabed_type = Left;
+			return false;
 		}
-		if (abs(tmp_rt.right() - p.x()) < thresh)
-		{
-			undermouse = true;
-			grabed_type = Right;
-		}
-		if (abs(tmp_rt.top() - p.y()) < thresh)
-		{
-			undermouse = true;
-			grabed_type = Top;
-		}
-		if (abs(tmp_rt.bottom() - p.y()) < thresh)
-		{
-			undermouse = true;
-			grabed_type = Bottom;
-		}
-		QPoint p1;
-		QPoint p2;
-		if (undermouse)
-		{
-			switch (grabed_type)
-			{
-			case ImageWidgetPrivate::Top:
-				/*auto tmp_tl*/p1 = tmp_rt.topLeft() - p;
-				/*auto tmp_tr*/p2 = tmp_rt.topRight() - p;
-				if (abs(p1.x()) <= thresh && abs(p1.y()) <= thresh)
-				{
-					grabed_type = TopLeft;
-				}
-				if (abs(p2.x()) <= thresh && abs(p2.y()) <= thresh)
-				{
-					grabed_type = TopRight;
-				}
-				break;
-			case ImageWidgetPrivate::Bottom:
-				/*auto tmp_bl*/p1 = tmp_rt.topLeft() - p;
-				/*auto tmp_br*/p2 = tmp_rt.topRight() - p;
-				if (abs(p1.x()) <= thresh && p1.y() <= thresh)
-				{
-					grabed_type = BottomLeft;
-				}
-				if (abs(p2.x()) <= thresh && p2.y() <= thresh)
-				{
-					grabed_type = BottomRight;
-				}
-				break;
-			case ImageWidgetPrivate::Left:
-				/*auto tmp_tl*/p1 = tmp_rt.topLeft() - p;
-				/*auto tmp_bl*/p2 = tmp_rt.bottomLeft() - p;
-				if (abs(p1.x()) <= thresh && abs(p1.y()) <= thresh)
-				{
-					grabed_type = TopLeft;
-				}
-				if (abs(p2.x()) <= thresh && abs(p2.y()) <= thresh)
-				{
-					grabed_type = BottomLeft;
-				}
-				break;
-			case ImageWidgetPrivate::Right:
-				/*auto tmp_tr*/p1 = tmp_rt.topLeft() - p;
-				/*auto tmp_br*/p2 = tmp_rt.bottomLeft() - p;
-				if (abs(p1.x()) <= thresh && abs(p1.y()) <= thresh)
-				{
-					grabed_type = TopRight;
-				}
-				if (abs(p2.x()) <= thresh && abs(p2.y()) <= thresh)
-				{
-					grabed_type = BottomRight;
-				}
-				break;
-			default:
-				break;
-			}
-		}
-		return undermouse;
 	}
 
 private:
 	friend ImageWidget;
-	QLinkedList<ImageBox> box_list;
+	QLinkedList<ImageBox*> box_list;
 	ImageWidget* q_ptr;
 	bool is_painting;
 	ImageBox* grabed_box_ptr;
 	bool grabed_obj;
 	QPoint start_point;
 	bool grabed_edge;
-	const int grabedge_thresh;
-	GrabedEdgeType grabed_type;
-	ImageBox new_box_tmp;
+	ImageBox::GrabedEdgeType grabed_type;
+	ImageBox* new_box_tmp;
 };
 
 #ifdef IMAGEWIDGET_QML
 ImageWidget::ImageWidget(QQuickItem* parent)
 #else
-ImageWidget::ImageWidget(QWidget *parent)
+ImageWidget::ImageWidget(QWidget* parent)
 #endif // IMAGEWIDGET_QML
 	: ImageWidgetBase(parent),
 	d_ptr(new ImageWidgetPrivate(this))
@@ -904,7 +759,7 @@ ImageWidget::~ImageWidget()
 	delete d_ptr;
 }
 
-void ImageWidget::mousePressEvent(QMouseEvent *e)
+void ImageWidget::mousePressEvent(QMouseEvent* e)
 {
 	if (e->button() == Qt::MouseButton::LeftButton)
 	{
@@ -912,17 +767,17 @@ void ImageWidget::mousePressEvent(QMouseEvent *e)
 		if (d_ptr->is_painting)
 		{
 			d_ptr->box_list.push_front(d_ptr->new_box_tmp);
-			d_ptr->grabed_box_ptr = &(*d_ptr->box_list.begin());
-			d_ptr->grabed_box_ptr->editing = true;
+			d_ptr->new_box_tmp = nullptr;
+			d_ptr->grabed_box_ptr = *(d_ptr->box_list.begin());
+			d_ptr->grabed_box_ptr->setEditing(true);
 			auto start_point = d->getImagePosition<QPointF>(e->pos());
-			d_ptr->grabed_box_ptr->x = start_point.x();
-			d_ptr->grabed_box_ptr->y = start_point.y();
+			d_ptr->grabed_box_ptr->startPaint(start_point);
 			update();
 			return;
 		}
 		auto pos = d->getImagePosition<QPoint>(e->pos());
 
-		d_ptr->checkPress(pos,d->getAveragePower());
+		d_ptr->checkPress(pos, d->getAveragePower());
 		if (d_ptr->grabed_edge)
 		{
 			update();
@@ -930,22 +785,16 @@ void ImageWidget::mousePressEvent(QMouseEvent *e)
 		}
 		bool flag(false);
 		decltype(d_ptr->box_list.begin()) iter(d_ptr->box_list.begin());
-		for (auto &a : d_ptr->box_list)
+		for (auto& a : d_ptr->box_list)
 		{
-			if (!a.display)
-			{
-				iter++;
-				continue;
-			}
-			//auto pos = d->getImagePosition(e->pos());
-			if (a.isInBox(pos))
+			if (a->isInBox(pos))
 			{
 				auto tmp = *iter;
 				d_ptr->box_list.erase(iter);
 				d_ptr->box_list.push_front(tmp);
-				d_ptr->grabed_box_ptr = &(*d_ptr->box_list.begin());
+				d_ptr->grabed_box_ptr = *d_ptr->box_list.begin();
 				d_ptr->resetBoxEditing();
-				d_ptr->grabed_box_ptr->editing = true;
+				d_ptr->grabed_box_ptr->setEditing(true);
 				d_ptr->start_point = e->pos();
 				flag = true;
 				break;
@@ -960,7 +809,7 @@ void ImageWidget::mousePressEvent(QMouseEvent *e)
 	}
 }
 
-void ImageWidget::mouseMoveEvent(QMouseEvent *e)
+void ImageWidget::mouseMoveEvent(QMouseEvent* e)
 {
 	if (d_ptr->grabed_edge)
 	{
@@ -983,113 +832,46 @@ void ImageWidget::mouseMoveEvent(QMouseEvent *e)
 		}
 		auto box_ptr = d_ptr->box_list.begin();
 		QRect new_rt;
-		switch (d_ptr->grabed_type)
-		{
-		case ImageWidgetPrivate::Left:
-			new_rt = box_ptr->toQRect();
-			new_rt.setLeft(m.x());
-			box_ptr->fromQRect(new_rt);
-			break;
-		case ImageWidgetPrivate::Right:
-			new_rt = box_ptr->toQRect();
-			new_rt.setRight(m.x());
-			box_ptr->fromQRect(new_rt);
-			break;
-		case ImageWidgetPrivate::Top:
-			new_rt = box_ptr->toQRect();
-			new_rt.setTop(m.y());
-			box_ptr->fromQRect(new_rt);
-			break;
-		case ImageWidgetPrivate::Bottom:
-			new_rt = box_ptr->toQRect();
-			new_rt.setBottom(m.y());
-			box_ptr->fromQRect(new_rt);
-			break;
-		case ImageWidgetPrivate::TopLeft:
-			if (box_ptr->type == ImageBox::Line || box_ptr->type == ImageBox::Point)
-			{
-				box_ptr->x = m.x();
-				box_ptr->y = m.y();
-			}
-			else
-			{
-				new_rt = box_ptr->toQRect();
-				new_rt.setTopLeft(QPoint(m.x(),m.y()));
-				box_ptr->fromQRect(new_rt);
-			}
-			break;
-		case ImageWidgetPrivate::TopRight:
-			new_rt = box_ptr->toQRect();
-			new_rt.setTopRight(QPoint(m.x(), m.y()));
-			box_ptr->fromQRect(new_rt);
-			break;
-		case ImageWidgetPrivate::BottomLeft:
-			new_rt = box_ptr->toQRect();
-			new_rt.setBottomLeft(QPoint(m.x(), m.y()));
-			box_ptr->fromQRect(new_rt);
-			break;
-		case ImageWidgetPrivate::BottomRight:
-			if (box_ptr->type == ImageBox::Line )
-			{
-				box_ptr->ex = m.x();
-				box_ptr->ey = m.y();
-			}
-			else if (box_ptr->type == ImageBox::Point)
-			{
-				box_ptr->x = m.x();
-				box_ptr->y = m.y();
-			}
-			else
-			{
-				new_rt = box_ptr->toQRect();
-				new_rt.setBottomRight(QPoint(m.x(), m.y()));
-				box_ptr->fromQRect(new_rt);
-			}
-			break;
-		default:
-			break;
-		}
-
+		(*box_ptr)->editEdge(d_ptr->grabed_type, m);
 		update();
 	}
 #ifndef IMAGEWIDGET_QML
-
-
 	if (d_ptr->checkMove(d->getImagePosition<QPoint>(e->pos()), d->getAveragePower()))
 	{
 		switch (d_ptr->grabed_type)
 		{
-		case ImageWidgetPrivate::Left:
+		case ImageBox::GrabedEdgeType::Left:
 			setCursor(Qt::SizeHorCursor);
 			break;
-		case ImageWidgetPrivate::Right:
+		case ImageBox::GrabedEdgeType::Right:
 			setCursor(Qt::SizeHorCursor);
 			break;
-		case ImageWidgetPrivate::Top:
+		case ImageBox::GrabedEdgeType::Top:
 			setCursor(Qt::SizeVerCursor);
 			break;
-		case ImageWidgetPrivate::Bottom:
+		case ImageBox::GrabedEdgeType::Bottom:
 			setCursor(Qt::SizeVerCursor);
 			break;
-		case ImageWidgetPrivate::TopLeft:
+		case ImageBox::GrabedEdgeType::TopLeft:
 			setCursor(Qt::SizeFDiagCursor);
 			break;
-		case ImageWidgetPrivate::TopRight:
+		case ImageBox::GrabedEdgeType::TopRight:
 			setCursor(Qt::SizeBDiagCursor);
 			break;
-		case ImageWidgetPrivate::BottomLeft:
+		case ImageBox::GrabedEdgeType::BottomLeft:
 			setCursor(Qt::SizeBDiagCursor);
 			break;
-		case ImageWidgetPrivate::BottomRight:
+		case ImageBox::GrabedEdgeType::BottomRight:
 			setCursor(Qt::SizeFDiagCursor);
 			break;
 		default:
+			setCursor(Qt::ArrowCursor);
 			break;
 		}
 	}
-	else if(d_ptr->box_list.begin() != d_ptr->box_list.end())
+	else if (d_ptr->box_list.begin() != d_ptr->box_list.end())
 	{
-		if (d_ptr->box_list.begin()->isInBox(d->getImagePosition<QPoint>(e->pos())))
+		if ((*d_ptr->box_list.begin())->isInBox(d->getImagePosition<QPoint>(e->pos())))
 		{
 			setCursor(Qt::SizeAllCursor);
 		}
@@ -1113,106 +895,8 @@ void ImageWidget::mouseMoveEvent(QMouseEvent *e)
 	if (d_ptr->is_painting)
 	{
 		auto m = d->getImagePosition<QPointF>(e->pos());
-		switch (d_ptr->grabed_box_ptr->type)
-		{
-		case ImageBox::Rect:
-			d_ptr->grabed_box_ptr->width = m.x() - d_ptr->grabed_box_ptr->x;
-			d_ptr->grabed_box_ptr->height = m.y() - d_ptr->grabed_box_ptr->y;
-
-			break;
-		case ImageBox::Point:
-			d_ptr->grabed_box_ptr->x = m.x();
-			d_ptr->grabed_box_ptr->y = m.y();
-			break;
-		case ImageBox::Circle:
-			d_ptr->grabed_box_ptr->width = m.x() - d_ptr->grabed_box_ptr->x;
-			d_ptr->grabed_box_ptr->height = m.y() - d_ptr->grabed_box_ptr->y;
-			break;
-		case ImageBox::Line:
-			d_ptr->grabed_box_ptr->ex = m.x();
-			d_ptr->grabed_box_ptr->ey = m.y();
-			break;
-		default:
-			break;
-		}
-		if (d_ptr->grabed_box_ptr->type == ImageBox::Circle || d_ptr->grabed_box_ptr->type == ImageBox::Rect)
-		{
-			if ((d_ptr->grabed_box_ptr->x + d_ptr->grabed_box_ptr->width) > d->getImageSize().width())
-			{
-				d_ptr->grabed_box_ptr->width = d->getImageSize().width() - d_ptr->grabed_box_ptr->x;
-			}
-			if ((d_ptr->grabed_box_ptr->x + d_ptr->grabed_box_ptr->width) < 0)
-			{
-				d_ptr->grabed_box_ptr->width = -d_ptr->grabed_box_ptr->x;
-			}
-			if ((d_ptr->grabed_box_ptr->y + d_ptr->grabed_box_ptr->height) > d->getImageSize().height())
-			{
-				d_ptr->grabed_box_ptr->height = d->getImageSize().height() - d_ptr->grabed_box_ptr->y;
-			}
-			if ((d_ptr->grabed_box_ptr->y + d_ptr->grabed_box_ptr->height) < 0)
-			{
-				d_ptr->grabed_box_ptr->height = -d_ptr->grabed_box_ptr->y;
-			}
-		}
-		else if(d_ptr->grabed_box_ptr->type == ImageBox::Point || d_ptr->grabed_box_ptr->type == ImageBox::Line)
-		{
-			if (m.x() > d->getImageSize().width())
-			{
-				switch (d_ptr->grabed_box_ptr->type)
-				{
-				case ImageBox::Point:
-					d_ptr->grabed_box_ptr->x = d->getImageSize().width();
-					break;		
-				case ImageBox::Line:
-					d_ptr->grabed_box_ptr->ex = d->getImageSize().width();
-					break;
-				default:
-					break;
-				}
-			}
-			if (m.x() < 0)
-			{
-				switch (d_ptr->grabed_box_ptr->type)
-				{
-				case ImageBox::Point:
-					d_ptr->grabed_box_ptr->x = 0;
-					break;
-				case ImageBox::Line:
-					d_ptr->grabed_box_ptr->ex = 0;
-					break;
-				default:
-					break;
-				}
-			}
-			if (m.x() > d->getImageSize().height())
-			{
-				switch (d_ptr->grabed_box_ptr->type)
-				{
-				case ImageBox::Point:
-					d_ptr->grabed_box_ptr->y = d->getImageSize().height();
-					break;
-				case ImageBox::Line:
-					d_ptr->grabed_box_ptr->ey = d->getImageSize().height();
-					break;
-				default:
-					break;
-				}
-			}
-			if (m.y() < 0)
-			{
-				switch (d_ptr->grabed_box_ptr->type)
-				{
-				case ImageBox::Point:
-					d_ptr->grabed_box_ptr->y = 0;
-					break;
-				case ImageBox::Line:
-					d_ptr->grabed_box_ptr->ey = 0;
-					break;
-				default:
-					break;
-				}
-			}
-		}
+		d_ptr->grabed_box_ptr->endPaint(m);
+		d_ptr->grabed_box_ptr->fixShape(d->getImageSize());
 	}
 	else
 	{
@@ -1223,7 +907,7 @@ void ImageWidget::mouseMoveEvent(QMouseEvent *e)
 	update();
 }
 
-void ImageWidget::mouseReleaseEvent(QMouseEvent *e)
+void ImageWidget::mouseReleaseEvent(QMouseEvent* e)
 {
 	if (d->moving)
 	{
@@ -1235,7 +919,7 @@ void ImageWidget::mouseReleaseEvent(QMouseEvent *e)
 	{
 		for (auto iter = d_ptr->box_list.begin() + 1; iter != d_ptr->box_list.end(); iter++)
 		{
-			iter->editing = false;
+			(*iter)->setEditing(false);
 		}
 	}
 	d_ptr->is_painting = false;
@@ -1264,75 +948,30 @@ void ImageWidget::paintEvent(QPaintEvent* e)
 	QPainter* painter_ptr = &painter_obj;
 	painter_ptr->begin(this);
 #endif
-	for (auto &a : d_ptr->box_list)
+	for (auto& a : d_ptr->box_list)
 	{
-		if (!a.display)
-			continue;
-		QPen pen;
-		QBrush brush;
-		brush.setStyle(a.env ? Qt::BrushStyle::FDiagPattern : Qt::BrushStyle::NoBrush);
-		brush.setColor(a.toQColor());
-		pen.setStyle(a.editing ? Qt::PenStyle::DashLine : Qt::PenStyle::SolidLine);
-		pen.setColor(a.toQColor());
-		painter_ptr->setBrush(brush);
-		painter_ptr->setPen(pen);
-		switch (a.type)
-		{
-		case ImageBox::Rect:
-			painter_ptr->drawRect(d->getPaintRect<QRect>(a.toQRect()));
-			break;
-		case ImageBox::Circle:
-		{
-			auto c = d->getPaintRect<QRectF>(a.toQRect());
-			painter_ptr->drawEllipse(c);
-			painter_ptr->drawRect(c);
-		}
-			break;
-		case ImageBox::Point:
-		{
-			brush.setStyle(Qt::SolidPattern);
-			painter_ptr->setBrush(brush);
-			auto pnt = d->getPaintPosition<QPoint>(a.toQPoint());
-			painter_ptr->drawEllipse(pnt.x() - 3,pnt.y() - 3,6,6);
-		}
-		break;
-		case ImageBox::Line:
-		{
-			brush.setStyle(Qt::SolidPattern);
-			painter_ptr->setBrush(brush);
-			auto line = a.toQLine();
-			auto p1 = d->getPaintPosition<QPointF>(line.p1());
-			auto p2 = d->getPaintPosition<QPointF>(line.p2());
-			painter_ptr->drawEllipse(p1.x() - 3, p1.y() - 3, 6, 6);
-			painter_ptr->drawEllipse(p2.x() - 3, p2.y() - 3, 6, 6);
-			painter_ptr->drawLine(d->getPaintLine<QLine>(a.toQLine()));
-		}
-		break;
-		default:
-			break;
-		}
+		a->paintShape(painter_ptr, d);
 	}
 #ifndef IMAGEWIDGET_QML
 	painter_ptr->end();
 #endif
 }
 
-void ImageWidget::wheelEvent(QWheelEvent *e)
+void ImageWidget::wheelEvent(QWheelEvent* e)
 {
 	ImageWidgetBase::wheelEvent(e);
 	update();
 }
 #ifndef IMAGEWIDGET_QML
-void ImageWidget::contextMenuEvent(QContextMenuEvent *e)
+void ImageWidget::contextMenuEvent(QContextMenuEvent* e)
 {
 
 	QMenu menu;
-
 	decltype(d_ptr->box_list.begin()) selected_iter(d_ptr->box_list.end());
-	for (auto iter = d_ptr->box_list.begin();iter != d_ptr->box_list.end();iter++)
+	for (auto iter = d_ptr->box_list.begin(); iter != d_ptr->box_list.end(); iter++)
 	{
 		auto pos = d->getImagePosition<QPoint>(e->pos());
-		if (iter->isInBox(pos))
+		if ((*iter)->isInBox(pos))
 		{
 			selected_iter = iter;
 			break;
@@ -1341,155 +980,243 @@ void ImageWidget::contextMenuEvent(QContextMenuEvent *e)
 	if (selected_iter != d_ptr->box_list.end())
 	{
 		auto new_box = *selected_iter;
-		new_box.editing = true;
+		new_box->setEditing(true);
 		d_ptr->box_list.erase(selected_iter);
 		d_ptr->box_list.push_front(new_box);
 		for (auto iter = d_ptr->box_list.begin() + 1; iter != d_ptr->box_list.end(); iter++)
 		{
-			iter->editing = false;
+			(*iter)->setEditing(false);
 		}
 		update();
 		selected_iter = d_ptr->box_list.begin();
-		QAction env_action(u8"反向");
+		QAction env_action("反向");
 		env_action.setCheckable(true);
-		env_action.setChecked(selected_iter->env);
-		connect(&env_action, &QAction::triggered, [this, &selected_iter,&env_action]() {
-			selected_iter->env = env_action.isChecked();
+		env_action.setChecked((*selected_iter)->isEnv());
+		connect(&env_action, &QAction::triggered, [this, &selected_iter, &env_action]() {
+			(*selected_iter)->setIsEnv(env_action.isChecked());
 			update();
+			});
+		QAction outmask_action("输出Mask图片");
+		connect(&outmask_action, &QAction::triggered, [this, &selected_iter, &outmask_action]() {
+			auto fn = QFileDialog::getSaveFileName(this, "选择文件", "./img.png", "Image (*.png *.bmp *.jpg)");
+			try
+			{
+				cv::imwrite(fn.toStdString(), (*selected_iter)->getMask(d->getImageSize()));
+			}
+			catch (const cv::Exception & e)
+			{
+				QMessageBox::warning(nullptr, "警告", "输出失败");
+
+			}
 		});
 		menu.addAction(&env_action);
+		menu.addAction(&outmask_action);
 		menu.exec(e->globalPos());
 		return;
 	}
 #ifdef TEST
 	QAction paint_action(u8"创建选框");
 	connect(&paint_action, &QAction::triggered, [this]() {
-		d_ptr->new_box_tmp = ImageBox();
-		d_ptr->is_painting = true;
-	});
+		paintNewImageBox(new RectImageBox(0, 0, 0, 0));
+		});
 	menu.addAction(&paint_action);
 #else
 #endif // TEST
+	QAction save_img("输出原图");
+	connect(&save_img, &QAction::triggered,this, [this]() {
+		auto fn = QFileDialog::getSaveFileName(this, "选择文件", "./img.png", "Image (*.png *.bmp *.jpg)");
+		try
+		{
+			cv::imwrite(fn.toStdString(), d->rgb);
+		}
+		catch (const cv::Exception& e)
+		{
+			QMessageBox::warning(nullptr, "警告", "输出失败");
+
+		}
+		});
+
+	QAction save_pimg("输出绘制图片");
+
+	connect(&save_pimg, &QAction::triggered,this, [this]() {
+		auto fn = QFileDialog::getSaveFileName(this, "选择文件", "./img.png", "Image (*.png *.bmp *.jpg)");
+
+		try
+		{
+			cv::Mat save = d->rgb.clone();
+			d->paint_data.drawDatas(save);
+			cv::imwrite(fn.toStdString(), save);
+		}
+		catch (const cv::Exception & e)
+		{
+			QMessageBox::warning(nullptr,"警告", "输出失败");
+
+		}
+		});
+	menu.addAction(&save_img);
+	menu.addAction(&save_pimg);
 	menu.exec(e->globalPos());
 	return;
 }
 #endif
-bool ImageWidget::addImageBox(const ImageBox & box)
+
+void ImageWidget::paintNewImageBox(ImageBox* box)
 {
-	bool flag(false);
-	for (auto &a : d_ptr->box_list)
+	for (auto iter = d_ptr->box_list.begin(); iter != d_ptr->box_list.end(); iter++)
 	{
-		if (a.id == -1)
+		if ((*iter)->getBoxID() == -1)
 			continue;
-		if (a.id == box.id)
+		if ((*iter)->getBoxID() == box->getBoxID())
 		{
-			flag = true;
+			auto tmp = *iter;
+			d_ptr->box_list.erase(iter);
+			tmp->deleteLater();
+			d_ptr->box_list.push_front(box);
 			break;
 		}
 	}
-	if (flag)
+	box->setParent(this);
+	d_ptr->is_painting = true;
+	d_ptr->new_box_tmp = box;
+}
+
+void ImageWidget::addImageBox(ImageBox* box)
+{
+	for (auto iter = d_ptr->box_list.begin(); iter != d_ptr->box_list.end(); iter++)
 	{
-		return false;
+		if ((*iter)->getBoxID() == -1)
+			continue;
+		if ((*iter)->getBoxID() == box->getBoxID())
+		{
+			auto tmp = *iter;
+			d_ptr->box_list.erase(iter);
+			tmp->deleteLater();
+			break;
+		}
 	}
+	box->setParent(this);
 	d_ptr->box_list.push_front(box);
 	update();
-	return true;
 }
 
-bool ImageWidget::paintNewImageBox(const ImageBox::ShapeType& type, const QString & name, const QColor & color, const int & id, const bool & display)
+void ImageWidget::removeImageBoxById(const int& id)
 {
-	bool flag(false);
-	for (auto &a : d_ptr->box_list)
+	for (auto iter = d_ptr->box_list.begin(); iter != d_ptr->box_list.end();iter++)
 	{
-		if (a.id == -1)
-			continue;
-		if (a.id == id)
+		if ((*iter)->getBoxID() == id)
 		{
-			flag = true;
+			auto tmp = *iter;
+			d_ptr->box_list.erase(iter);
+			tmp->deleteLater();
 			break;
 		}
 	}
-	if (flag)
-	{
-		return false;
-	}
-	d_ptr->is_painting = true;
-	d_ptr->new_box_tmp = ImageBox(type,name, 0,0,0,0, color, id, display);
-	return true;
 }
 
-bool ImageWidget::addImageBox(const ImageBox::ShapeType& type,const QString & name, const int& ix1, const int& iy1, const int& ix2, const int& iy2, const QColor & color, const int & id, const bool & display)
+void ImageWidget::removeImageBoxByName(const QString& name)
 {
-	bool flag(false);
-	for (auto &a : d_ptr->box_list)
+	while (true)
 	{
-		if (a.id == -1)
-			continue;
-		if (a.id == id)
+		bool flag = false;
+		for (auto iter = d_ptr->box_list.begin(); iter != d_ptr->box_list.end(); iter++)
 		{
-			flag = true;
-			break;
+			if ((*iter)->getName() == name)
+			{
+				auto tmp = *iter;
+				d_ptr->box_list.erase(iter);
+				tmp->deleteLater();
+				flag = true;
+				break;
+			}
 		}
+		if (!flag)
+			break;
 	}
-	if (flag)
-	{
-		return false;
-	}
-	d_ptr->box_list.push_front(ImageBox(type,name, ix1,iy1,ix2,iy2, color, id, display));
-	update();
-	return true;
 }
 
-bool ImageWidget::getImageBoxFromId(const int & id, ImageBox & rtn)
+void ImageWidget::paintNewImageBox(QVariant box)
+{
+	return paintNewImageBox(static_cast<ImageBox*>(box.value<QObject*>()));
+}
+void ImageWidget::addImageBox(QVariant box)
+{
+	auto val = static_cast<ImageBox*>(box.value<QObject*>());
+	addImageBox(val);
+}
+
+ImageBox* ImageWidget::getImageBoxFromId(const int& id)
 {
 	ImageBox* found_ptr(nullptr);
-	for (auto &a : d_ptr->box_list)
+	for (auto& a : d_ptr->box_list)
 	{
-		if (a.id == -1)
+		if (a->getBoxID() == -1)
 			continue;
-		if (a.id == id)
+		if (a->getBoxID() == id)
 		{
-			found_ptr = &a;
+			found_ptr = a;
 			break;
 		}
 	}
-	if (found_ptr)
-	{
-		rtn = *found_ptr;
-		rtn.editing = false;
-		return true;
-	}
-	return false;
+	return found_ptr;
 }
 
-std::vector<ImageBox> ImageWidget::getImageBoxsFromName(const QString & name)
+QVariant ImageWidget::getImageBoxVarFromId(const int& id)
 {
-	std::vector<ImageBox> out;
-	for (auto &a : d_ptr->box_list)
-	{
-		if (a.name == name)
-		{
-			if (a.editing = true)
-			{
-				ImageBox b = a;
-				b.editing = false;
-				out.push_back(b);
-			}
-			else
-				out.push_back(a);
-		}
+	QVariant var;
+	var.setValue( static_cast<QObject*>(getImageBoxFromId(id)));
+	return var;
+}
 
+QList<ImageBox*> ImageWidget::getImageBoxsFromName(const QString& name)
+{
+	QList<ImageBox*> out;
+	for (auto& a : d_ptr->box_list)
+	{
+		if (a->getName() == name)
+		{
+			out.push_back(a);
+		}
+	}
+	return out;
+}
+
+QVariantList ImageWidget::getImageBoxVarlistFromName(const QString& name)
+{
+	QList<QVariant> out;
+	auto rtn = getImageBoxsFromName(name);
+	for (auto& node: rtn)
+	{
+		QVariant var;
+		var.setValue(static_cast<QObject*>(node));
+		out.push_back(var);
 	}
 	return out;
 }
 
 void ImageWidget::clearAllBoxs()
 {
+	for (auto& a : d_ptr->box_list)
+	{
+		a->deleteLater();
+	}
 	d_ptr->box_list.clear();
 	update();
 }
 
-#include "ImageWidget.moc"
+void ImageBox::operator=(const ImageBox& box)
+{
+	display = box.display;
+	name = box.name;
+	boxID = box.boxID;
+	env = box.env;
+	editing = box.editing;
+}
+
+ImageBox::ImageBox(const ImageBox& other)
+{
+	*this = other;
+}
+
 
 void PaintData::paintDatas(QPainter* painter, ImageWidgetBasePrivate* d_ptr)
 {
@@ -1499,7 +1226,7 @@ void PaintData::paintDatas(QPainter* painter, ImageWidgetBasePrivate* d_ptr)
 		const auto& [p1, p2, thinkness, color] = line;
 		auto pen_color = QColor(color[2], color[1], color[0]);
 
-		paint_line.setP1(d_ptr->getPaintPosition<QPoint>(QPoint(p1.x,p1.y)));
+		paint_line.setP1(d_ptr->getPaintPosition<QPoint>(QPoint(p1.x, p1.y)));
 		paint_line.setP2(d_ptr->getPaintPosition<QPoint>(QPoint(p2.x, p2.y)));
 
 		QPen pen(pen_color);
@@ -1517,7 +1244,7 @@ void PaintData::paintDatas(QPainter* painter, ImageWidgetBasePrivate* d_ptr)
 		QPen pen(pen_color);
 		QBrush brush(pen_color);
 		brush.setStyle(thinkness < 0 ? Qt::SolidPattern : Qt::NoBrush);
-		if(thinkness > 0)
+		if (thinkness > 0)
 			pen.setWidth(thinkness);
 		painter->setPen(pen);
 		painter->setBrush(brush);
@@ -1541,9 +1268,65 @@ void PaintData::paintDatas(QPainter* painter, ImageWidgetBasePrivate* d_ptr)
 		painter->setBrush(brush);
 		painter->drawEllipse(paint_rect);
 	}
+	for (const auto& center : corss_lines)
+	{
+		const auto& [center_pos, wh,thinkness,color] = center;
+		QLineF line1(d_ptr->getPaintPosition<QPointF>(QPointF(center_pos.x - wh / 2., center_pos.y)), d_ptr->getPaintPosition<QPointF>(QPointF(center_pos.x + wh / 2., center_pos.y)));
+		QLineF line2(d_ptr->getPaintPosition<QPointF>(QPointF(center_pos.x,center_pos.y - wh / 2.)), d_ptr->getPaintPosition<QPointF>(QPointF(center_pos.x, center_pos.y + wh / 2.)));
+		auto pen_color = QColor(color[2], color[1], color[0]);
+		QPen pen(pen_color);
+		pen.setStyle(Qt::PenStyle::SolidLine);
+		QBrush brush(pen_color);
+		brush.setStyle(thinkness < 0 ? Qt::SolidPattern : Qt::NoBrush);
+		if (brush.style() == Qt::NoBrush)
+			pen.setWidth(thinkness);
+		painter->setPen(pen);
+		painter->setBrush(brush);
+		painter->drawLine(line1);
+		painter->drawLine(line2);
+	}
+	for (const auto& text_tuple : texts)
+	{
+		const auto& [text, pos, pixel_size, font_style, color] = text_tuple;
+
+		auto pen_color = QColor(color[2], color[1], color[0]);
+		QPen pen(pen_color);
+		QFont font;
+		font.setFamily(font_style.c_str());
+		auto text_scale = pixel_size * d_ptr->getPower();
+		font.setPixelSize(std::floor(text_scale < 1 ? 1 : text_scale));
+		painter->setPen(pen);
+		painter->setFont(font);
+		painter->drawText(d_ptr->getPaintPosition<QPointF>(QPoint(pos.x,pos.y)),text.c_str());
+	}
 }
 
-void PaintData::drawDatas(cv::Mat& mat)
+PaintData& PaintData::operator<<(PaintData& inp)
+{
+	for (auto& a : inp.lines)
+	{
+		lines.push_back(std::move(a));
+	}
+	for (auto& a : inp.circles)
+	{
+		circles.push_back(std::move(a));
+	}	
+	for (auto& a : inp.rects)
+	{
+		rects.push_back(std::move(a));
+	}	
+	for (auto& a : inp.texts)
+	{
+		texts.push_back(std::move(a));
+	}
+	for (auto& a : inp.corss_lines)
+	{
+		corss_lines.push_back(std::move(a));
+	}
+	return *this;
+}
+
+void PaintData::drawDatas(cv::Mat& mat) const
 {
 	for (const auto& line : lines)
 	{
@@ -1558,5 +1341,699 @@ void PaintData::drawDatas(cv::Mat& mat)
 		cv::RotatedRect rect(std::get<0>(circle).tl(), std::get<0>(circle).tl() + cv::Point2d(std::get<0>(circle).width), std::get<0>(circle).br());
 		cv::ellipse(mat, rect, std::get<2>(circle), std::get<1>(circle));
 	}
+	for (const auto& center : corss_lines)
+	{
+		cv::line(mat, std::get<0>(center) - cv::Point2d(std::get<1>(center) / 2., 0.), std::get<0>(center) + cv::Point2d(std::get<1>(center) / 2., 0.), std::get<3>(center),std::get<2>(center));
+		cv::line(mat, std::get<0>(center) - cv::Point2d(0., std::get<1>(center) / 2.), std::get<0>(center) + cv::Point2d(0., std::get<1>(center) / 2.), std::get<3>(center), std::get<2>(center));
+	}
+	for (const auto& text : texts)
+	{
+		cv::putText(mat,std::get<0>(text), std::get<1>(text),cv::FONT_HERSHEY_COMPLEX, cv::getFontScaleFromHeight(cv::FONT_HERSHEY_COMPLEX,std::get<2>(text)),std::get<4>(text));
+	}
+}
+
+//ImageBox(QObject* parent):
+
+//{
+//
+//}
+//ImageBox(/*const QString& name,*/ const int& id, const bool& display, const bool& env, QObject* parent) :
+
+
+ImageBox::ImageBox(
+	const QString& name,
+	const int& id,
+	const bool& display,
+	const bool& env,
+	QObject* parent) 
+	:
+	QObject(parent),
+	boxID(-1),
+	name(name),
+	display(display),
+	editing(false),
+	env(env)
+{
 
 }
+
+RectImageBox::RectImageBox(QObject* parent):
+	RectImageBox(
+		0,
+		0,
+		0,
+		0, 
+		QPen(QColor(0, 0, 255)),
+		QBrush(QColor(0, 0, 255, 0.2),
+		Qt::BrushStyle::SolidPattern), 
+		"default",
+		-1,
+		true,
+		false,
+		parent)
+{
+}
+
+
+RectImageBox::RectImageBox(const double& x,
+	const double& y,
+	const double& width,
+	const double& height,
+	const QPen& pen,
+	const QBrush& brush,
+	const QString& name,
+	const int& id,
+	const bool& display, const bool& env,
+	QObject* parent) :
+	x(x),
+	y(y),
+	width(width),
+	height(height),
+	pen(pen),
+	brush(brush),
+	editingPen(pen),
+	editingBrush(brush), 
+	ImageBox(name,id,display,env,parent)
+{
+	editingPen.setStyle(Qt::DashLine);
+	auto tmp = brush.color();
+	tmp.setAlpha(100);
+	editingBrush.setColor(tmp);
+}
+
+ImageBox::~ImageBox()
+{
+}
+
+bool ImageBox::isDisplay()
+{
+	return display;
+}
+
+bool ImageBox::isEnv()
+{
+	return env;
+}
+
+void ImageBox::setIsEnv(const bool& e)
+{
+	env = e;
+}
+
+void ImageBox::setIsDisplay(const bool& d)
+{
+	display = d;
+}
+
+int ImageBox::getBoxID()
+{
+	return boxID;
+}
+
+void ImageBox::setBoxID(const int& i)
+{
+	boxID = i;
+}
+
+QString ImageBox::getName()
+{
+	return name;
+}
+
+void ImageBox::setName(const QString& n)
+{
+	name = n;
+}
+
+bool ImageBox::getEditing()
+{
+	return editing;
+}
+
+void ImageBox::setEditing(const bool& e)
+{
+	editing = e;
+}
+
+QVariant ImageBox::getMaskVar(const int& width, const int&height)
+{
+	QVariant var;
+	var.setValue(getMask(QSize(width,height)));
+	return var;
+}
+
+RectImageBox::RectImageBox(const RectImageBox& other) :
+	ImageBox(other)
+{
+	*this = other;
+}
+
+void RectImageBox::operator=(const ImageBox& rb)
+{
+	const RectImageBox& pm = static_cast<const RectImageBox&>(rb);
+	operator=(pm);
+}
+
+void RectImageBox::operator=(const RectImageBox& rb)
+{
+	pen = rb.pen;
+	brush = rb.brush;
+	editingBrush = rb.editingBrush;
+	editingPen = rb.editingPen;
+	x = rb.x;
+	y = rb.y;
+	width = rb.width;
+	height = rb.height;
+
+	display = rb.display;
+	name = rb.name;
+	boxID = rb.boxID;
+	env = rb.env;
+	editing = rb.editing;
+}
+
+RectImageBox::~RectImageBox()
+{
+}
+
+QRect RectImageBox::getQRect()
+{
+	return QRect(x,y,width,height);
+}
+
+void RectImageBox::fromQRect(const QRect& rect)
+{
+	x = rect.x();
+	y = rect.y();
+	width = rect.width();
+	height = rect.height();
+}
+
+QRectF RectImageBox::getQRectF()
+{
+	return QRectF(x,y,width,height);
+}
+
+void RectImageBox::fromQRectF(const QRectF& rect)
+{
+	x = rect.x();
+	y = rect.y();
+	width = rect.width();
+	height = rect.height();
+}
+
+cv::Rect RectImageBox::getCVRect()
+{
+	return cv::Rect(x,y,width,height);
+}
+
+Q_INVOKABLE void RectImageBox::fromCVRect(const cv::Rect& rect)
+{
+	x = rect.x;
+	y = rect.y;
+	width = rect.width;
+	height = rect.height;
+}
+
+void RectImageBox::paintShape(QPainter* painter, ImageWidgetBasePrivate* d)
+{
+	if (!isDisplay())
+		return;
+	if (getEditing())
+	{
+		painter->setPen(editingPen);
+		painter->setBrush(editingBrush);
+	}
+	else
+	{
+		painter->setPen(pen);
+		painter->setBrush(brush);
+	}
+	painter->drawRect(d->getPaintRect<QRectF>(QRectF(x,y,width,height)));
+	QFont font;
+	font.setFamily("Microsoft YaHei");
+	double text_scale = 16 /** d->getPower()*/;
+	font.setPixelSize(std::floor(text_scale < 1 ? 1 : text_scale));
+	painter->setPen(QPen(pen.color()));
+	painter->setFont(font);
+	painter->drawText(d->getPaintPosition<QPointF>(QPoint(x, y)), "Name:" + getName() + QString(" (%1,%2,%3,%4)").arg(QString::number(int(x)), QString::number(int(y)), QString::number(int(width)), QString::number(int(height))));
+}
+
+bool RectImageBox::isInBox(const QPoint& p)
+{
+	if (!isDisplay())
+		return false;
+	return p.x() >= x && p.x() <= (x + width) && p.y() >= y && p.y() <= (y + height);
+}
+
+void RectImageBox::moveBox(const QPointF& vec,const QSize& is)
+{
+	if(x + vec.x() >= 0 && (x + vec.x() + width) < is.width())
+		x += vec.x();
+	if(y + vec.y() >= 0 && (y + vec.y() + height) < is.height())
+		y += vec.y();
+}
+
+std::optional<ImageBox::GrabedEdgeType> RectImageBox::checkPress(const QPoint& p, const double& power)
+{
+	std::optional<ImageBox::GrabedEdgeType> opt;
+	double thresh = grabedge_thresh * power;
+	auto tmp_rt = getQRect();
+	if (std::abs(tmp_rt.left() - p.x()) < thresh)
+	{
+		opt = Left;
+	}
+	if (std::abs(tmp_rt.right() - p.x()) < thresh)
+	{
+		opt = Right;
+	}
+	if (std::abs(tmp_rt.top() - p.y()) < thresh)
+	{
+		opt = Top;
+	}
+	if (std::abs(tmp_rt.bottom() - p.y()) < thresh)
+	{
+		opt = Bottom;
+	}
+	if (opt.has_value())
+	{
+		QPoint p1;
+		QPoint p2;
+		switch (opt.value())
+		{
+		case ImageBox::GrabedEdgeType::Top:
+			p1 = tmp_rt.topLeft() - p;
+			p2 = tmp_rt.topRight() - p;
+			if (std::abs(p1.x()) <= thresh && std::abs(p1.y()) <= thresh)
+			{
+				opt = TopLeft;
+			}
+			if (std::abs(p2.x()) <= thresh && std::abs(p2.y()) <= thresh)
+			{
+				opt = TopRight;
+			}
+			break;
+		case ImageBox::GrabedEdgeType::Bottom:
+			p1 = tmp_rt.topLeft() - p;
+			p2 = tmp_rt.topRight() - p;
+			if (std::abs(p1.x()) <= thresh && p1.y() <= thresh)
+			{
+				opt = BottomLeft;
+			}
+			if (std::abs(p2.x()) <= thresh && p2.y() <= thresh)
+			{
+				opt = BottomRight;
+			}
+			break;
+		case ImageBox::GrabedEdgeType::Left:
+			p1 = tmp_rt.topLeft() - p;
+			p2 = tmp_rt.bottomLeft() - p;
+			if (std::abs(p1.x()) <= thresh && std::abs(p1.y()) <= thresh)
+			{
+				opt = TopLeft;
+			}
+			if (std::abs(p2.x()) <= thresh && std::abs(p2.y()) <= thresh)
+			{
+				opt = BottomLeft;
+			}
+			break;
+		case ImageBox::GrabedEdgeType::Right:
+			p1 = tmp_rt.topLeft() - p;
+			p2 = tmp_rt.bottomLeft() - p;
+			if (std::abs(p1.x()) <= thresh && std::abs(p1.y()) <= thresh)
+			{
+				opt = TopRight;
+			}
+			if (std::abs(p2.x()) <= thresh && std::abs(p2.y()) <= thresh)
+			{
+				opt = BottomRight;
+			}
+			break;
+		default:
+			break;
+		}
+	}
+	return opt;
+}
+
+std::optional<ImageBox::GrabedEdgeType> RectImageBox::checkMove(const QPoint& p, const double& power)
+{
+	std::optional<ImageBox::GrabedEdgeType> opt;
+	double thresh = grabedge_thresh * power;
+	auto tmp_rt = getQRect();
+	if (abs(tmp_rt.left() - p.x()) < thresh)
+	{
+		opt = Left;
+	}
+	if (abs(tmp_rt.right() - p.x()) < thresh)
+	{
+		opt = Right;
+	}
+	if (abs(tmp_rt.top() - p.y()) < thresh)
+	{
+		opt = Top;
+	}
+	if (abs(tmp_rt.bottom() - p.y()) < thresh)
+	{
+		opt = Bottom;
+	}
+	QPoint p1;
+	QPoint p2;
+	if (opt.has_value())
+	{
+		switch (opt.value())
+		{
+		case ImageBox::GrabedEdgeType::Top:
+			p1 = tmp_rt.topLeft() - p;
+			p2 = tmp_rt.topRight() - p;
+			if (abs(p1.x()) <= thresh && abs(p1.y()) <= thresh)
+			{
+				opt = TopLeft;
+			}
+			if (abs(p2.x()) <= thresh && abs(p2.y()) <= thresh)
+			{
+				opt = TopRight;
+			}
+			break;
+		case ImageBox::GrabedEdgeType::Bottom:
+			p1 = tmp_rt.topLeft() - p;
+			p2 = tmp_rt.topRight() - p;
+			if (abs(p1.x()) <= thresh && p1.y() <= thresh)
+			{
+				opt = BottomLeft;
+			}
+			if (abs(p2.x()) <= thresh && p2.y() <= thresh)
+			{
+				opt = BottomRight;
+			}
+			break;
+		case ImageBox::GrabedEdgeType::Left:
+			p1 = tmp_rt.topLeft() - p;
+			p2 = tmp_rt.bottomLeft() - p;
+			if (abs(p1.x()) <= thresh && abs(p1.y()) <= thresh)
+			{
+				opt = TopLeft;
+			}
+			if (abs(p2.x()) <= thresh && abs(p2.y()) <= thresh)
+			{
+				opt = BottomLeft;
+			}
+			break;
+		case ImageBox::GrabedEdgeType::Right:
+			p1 = tmp_rt.topLeft() - p;
+			p2 = tmp_rt.bottomLeft() - p;
+			if (abs(p1.x()) <= thresh && abs(p1.y()) <= thresh)
+			{
+				opt = TopRight;
+			}
+			if (abs(p2.x()) <= thresh && abs(p2.y()) <= thresh)
+			{
+				opt = BottomRight;
+			}
+			break;
+		default:
+			break;
+		}
+	}
+	return opt;
+
+}
+
+cv::Mat RectImageBox::getMask(const QSize& sz)
+{
+	cv::Mat out(sz.height(), sz.width(), CV_8UC1, cv::Scalar(env ? 255 : 0));
+	cv::rectangle(out, cv::Rect(x, y, width, height), cv::Scalar(env ? 0 : 255), -1);
+	return out;
+}
+
+
+void RectImageBox::normalize()
+{
+	auto nor = QRectF(x, y, width, height).normalized();
+	x = nor.x();
+	y = nor.y();
+	width = nor.width();
+	height = nor.height();
+}
+
+void RectImageBox::startPaint(const QPointF& pnt)
+{
+	x = pnt.x();
+	y = pnt.y();
+}
+
+void RectImageBox::endPaint(const QPointF& pnt)
+{
+	width = pnt.x() - x;
+	height = pnt.y() - y;
+}
+
+void RectImageBox::editEdge(const ImageBox::GrabedEdgeType& type, const QPointF& pos)
+{
+	QRectF tmp_rt;
+	switch (type)
+	{
+	case ImageBox::GrabedEdgeType::Left:
+		tmp_rt = getQRect();
+		tmp_rt.setLeft(pos.x());
+		fromQRectF(tmp_rt);
+		break;
+	case ImageBox::GrabedEdgeType::Right:
+		tmp_rt = getQRect();
+		tmp_rt.setRight(pos.x());
+		fromQRectF(tmp_rt);
+		break;
+	case ImageBox::GrabedEdgeType::Top:
+		tmp_rt = getQRect();
+		tmp_rt.setTop(pos.y());
+		fromQRectF(tmp_rt);
+		break;
+	case ImageBox::GrabedEdgeType::Bottom:
+		tmp_rt = getQRect();
+		tmp_rt.setBottom(pos.y());
+		fromQRectF(tmp_rt);
+		break;
+	case ImageBox::GrabedEdgeType::TopLeft:
+		tmp_rt = getQRect();
+		tmp_rt.setTopLeft(pos);
+		fromQRectF(tmp_rt);
+		break;
+	case ImageBox::GrabedEdgeType::TopRight:
+		tmp_rt = getQRectF();
+		tmp_rt.setTopRight(pos);
+		fromQRectF(tmp_rt);
+		break;
+	case ImageBox::GrabedEdgeType::BottomLeft:
+		tmp_rt = getQRectF();
+		tmp_rt.setBottomLeft(pos);
+		fromQRectF(tmp_rt);
+		break;
+	case ImageBox::GrabedEdgeType::BottomRight:
+		tmp_rt = getQRectF();
+		tmp_rt.setBottomRight(pos);
+		fromQRectF(tmp_rt);
+		break;
+	default:
+		break;
+	}
+
+}
+
+void RectImageBox::fixShape(const QSize& size)
+{
+	if (x + width > size.width())
+	{
+		width = size.width() - x;
+	}
+	if (x + width < 0)
+	{
+		width = -x;
+	}
+	if (y + height > size.height())
+	{
+		height = size.height() - y;
+	}
+	if (y + height < 0)
+	{
+		height = -y;
+	}
+}
+
+void RectImageBox::resetData()
+{
+	x = 0;
+	y = 0;
+	width = 0;
+	height = 0;
+}
+
+QPen RectImageBox::getPen()
+{
+	return pen;
+}
+
+QBrush RectImageBox::getBrush()
+{
+	return brush;
+}
+
+QPen RectImageBox::getEditingPen()
+{
+	return editingPen;
+}
+
+QBrush RectImageBox::getEditingBrush()
+{
+	return editingBrush;
+}
+
+void RectImageBox::setPen(const QPen& p)
+{
+	pen = p;
+}
+
+void RectImageBox::setEditingPen(const QPen& p)
+{
+	editingPen = p;
+}
+
+void RectImageBox::setBrush(const QBrush& b)
+{
+	brush = b;
+}
+
+void RectImageBox::setEditingBrush(const QBrush& b)
+{
+	editingBrush = b;
+}
+
+void RectImageBox::setX(const double& x)
+{
+	this->x = x;
+}
+
+double RectImageBox::getX()
+{
+	return x;
+}
+
+void RectImageBox::setY(const double& y)
+{
+	this->y = y;
+}
+
+double RectImageBox::getY()
+{
+	return y;
+}
+
+void RectImageBox::setWidth(const double& w)
+{
+	this->width = w;
+}
+
+double RectImageBox::getWidth()
+{
+	return width;
+}
+
+void RectImageBox::setHeight(const double& h)
+{
+	this->height = h;
+}
+
+double RectImageBox::getHeight()
+{
+	return height;
+}
+
+
+EllipseImageBox::EllipseImageBox(QObject* parent) :
+	RectImageBox(parent)
+{
+}
+EllipseImageBox::EllipseImageBox(
+	const double& p1,
+	const double& p2,
+	const double& p3,
+	const double& p4,
+	const QPen& p5,
+	const QBrush& p6,
+	const QString& p7,
+	const int& p8,
+	const bool& p9,
+	const bool& p10,
+	QObject* p11) 
+	:
+	RectImageBox(p1,p2,p3,p4,p5,p6,p7,p8,p9,p10,p11)
+{
+
+}
+EllipseImageBox::EllipseImageBox(const EllipseImageBox& other) :
+	RectImageBox(other)
+{
+}
+
+void EllipseImageBox::operator=(const EllipseImageBox& rb)
+{
+	RectImageBox::operator=(rb);
+}
+
+cv::Mat EllipseImageBox::getMask(const QSize& sz)
+{
+	cv::Mat out(sz.height(), sz.width(), CV_8UC1, cv::Scalar(env ? 255 : 0));
+	cv::RotatedRect rect(cv::Point2f(x + width / 2., y + height / 2.),cv::Size2f( width, height), 0);
+	cv::ellipse(out, rect, cv::Scalar(env ? 0 : 255), -1);
+	return out;
+}
+
+EllipseImageBox::~EllipseImageBox()
+{
+}
+
+void EllipseImageBox::paintShape(QPainter* painter, ImageWidgetBasePrivate* d)
+{
+	if (!isDisplay())
+		return;
+	if (getEditing())
+	{
+		painter->setPen(editingPen);
+		painter->setBrush(editingBrush);
+	}
+	else
+	{
+		painter->setPen(pen);
+		painter->setBrush(brush);
+	}
+	auto rect_tmp = d->getPaintRect<QRectF>(QRectF(x, y, width, height));
+	painter->drawRect(rect_tmp);
+	painter->drawEllipse(rect_tmp);
+	QFont font;
+	font.setFamily("Microsoft YaHei");
+	double text_scale = 16 /** d->getPower()*/;
+	font.setPixelSize(std::floor(text_scale < 1 ? 1 : text_scale));
+	painter->setPen(QPen(pen.color()));
+	painter->setFont(font);
+	painter->drawText(d->getPaintPosition<QPointF>(QPoint(x, y)), "Name:" + getName() + QString(" (%1,%2,%3,%4)").arg(QString::number(int(x)), QString::number(int(y)), QString::number(int(width)), QString::number(int(height))));
+}
+#ifdef IMAGEWIDGET_QML
+#include <QQmlExtensionPlugin>
+
+class ImageWidgetQMLPlugin : public QQmlExtensionPlugin     // 继承QQmlExtensionPlugin
+{
+	Q_OBJECT
+	Q_PLUGIN_METADATA(IID QQmlExtensionInterface_iid)  // 为这个插件定义了一个唯一的接口，并注册至元对象系统
+
+public:
+	ImageWidgetQMLPlugin(QObject* parent = 0) : QQmlExtensionPlugin(parent) { }
+	void registerTypes(const char* uri) 
+	{
+		qmlRegisterType<ImageWidget>(uri, 1, 0, "ImageWidget");
+		qmlRegisterType<ImageWidgetBase>(uri, 1, 0, "ImageWidgetBase");
+		qmlRegisterType<RectImageBox>(uri, 1, 0, "RectImageBox");
+		qmlRegisterType<EllipseImageBox>(uri, 1, 0, "EllipseImageBox");
+	}
+};
+
+#endif
+#include "ImageWidget.moc"
