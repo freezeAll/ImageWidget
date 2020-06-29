@@ -12,14 +12,12 @@ public:
 		src(s),
 		rtn_box(ib)
 	{
-		old_id = ib->getBoxID();
 	}
 private:
 	friend class ROIDialog;
 	cv::Mat src;
 	ImageBox* rtn_box;
 	ROIDialog* q;
-	int old_id;
 	ImageWidget* iw_ptr;
 };
 
@@ -55,14 +53,17 @@ ROIDialog::ROIDialog(cv::Mat src, ImageBox* ib, const double& sc,const bool& pt,
 	ptr->setGeometry(0, 0, src.cols * roidialog_scale, src.rows * roidialog_scale);
 	this->setFixedSize(QSize(src.cols * roidialog_scale + 80, src.rows * roidialog_scale));
 	ptr->displayCVMat(src);
+	auto box = static_cast<ImageBox*>(d->rtn_box->metaObject()->newInstance());
+	*box = *ib;
 	if (pt)
 	{
-		ptr->paintNewImageBox(ib);
+		box->setBoxID(1);
+		ptr->paintNewImageBox(box);
 	}
 	else
 	{
-		ib->setBoxID(1);
-		ptr->addImageBox(ib);
+		box->setBoxID(1);
+		ptr->addImageBox(box);
 	}
 	auto okbtn_ptr = new QPushButton("OK", this);
 	okbtn_ptr->setGeometry(src.cols * roidialog_scale, 0, 80, 40);
@@ -73,8 +74,7 @@ ROIDialog::ROIDialog(cv::Mat src, ImageBox* ib, const double& sc,const bool& pt,
 
 	connect(okbtn_ptr, &QPushButton::clicked, this, [this]() {
 		ImageBox* out = d->iw_ptr->getImageBoxFromId(1);
-		;
-		out->setBoxID(d->old_id);
+		out->setBoxID(d->rtn_box->getBoxID());
 		*(d->rtn_box) = *out;
 		accept();
 	});
@@ -83,9 +83,8 @@ ROIDialog::ROIDialog(cv::Mat src, ImageBox* ib, const double& sc,const bool& pt,
 	});
 	connect(reset_ptr, &QPushButton::clicked, this, [this]() {
 		auto new_box = static_cast<ImageBox*>(d->rtn_box->metaObject()->newInstance());
-		*new_box = *(d->rtn_box);
-		new_box->resetData();
 		d->iw_ptr->clearAllBoxs();
+		new_box->setBoxID(1);
 		d->iw_ptr->paintNewImageBox(new_box);
 		});
 }

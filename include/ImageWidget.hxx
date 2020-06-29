@@ -1,6 +1,5 @@
 ﻿#pragma once
 
-#include <QGlobal.h>
 #ifdef IMAGEWIDGET_QML
 #include <QtQuick/QQuickPaintedItem>
 #include <QtGui/QPainter>
@@ -9,12 +8,11 @@
 #include <QString>
 #include <QPen>
 #include <QBrush>
-//#include <QObject>
+#include <QObject>
 #endif // IMAGEWIDGET_QML
 #include "opencv2/opencv.hpp"
 #include <optional>
 #include <QVariant>
-#pragma once
 #include <QtCore/qglobal.h>
 
 #ifndef BUILD_STATIC
@@ -92,8 +90,7 @@ protected:
 	QString name;
 	bool env;
 	bool editing;
-};
-Q_DECLARE_METATYPE(ImageBox)
+};Q_DECLARE_METATYPE(ImageBox)
 
 class IMAGEWIDGET_EXPORT RectImageBox : public ImageBox
 {
@@ -186,7 +183,7 @@ public:
 		const double& width,
 		const double& height,
 		const QPen& pen = QPen(QColor(0, 0, 255)),
-		const QBrush& brush = QBrush(QColor(0, 0, 255, 0.2), Qt::BrushStyle::SolidPattern),
+		const QBrush& brush = QBrush(QColor(0, 0, 255, 0), Qt::BrushStyle::SolidPattern),
 		const QString& name = "default",
 		const int& id = -1,
 		const bool& display = true,
@@ -293,8 +290,8 @@ public slots:
 	void removeImageBoxByName(const QString& name);
 	ImageBox* getImageBoxFromId(const int& id);
 	QVariant getImageBoxVarFromId(const int& id);
-	QList<ImageBox*> ImageWidget::getImageBoxsFromName(const QString& name);
-	QVariantList ImageWidget::getImageBoxVarlistFromName(const QString& name);
+	QList<ImageBox*> getImageBoxsFromName(const QString& name);
+	QVariantList getImageBoxVarlistFromName(const QString& name);
 	void clearAllBoxs();
 protected:
 	virtual void mousePressEvent(QMouseEvent*) override;

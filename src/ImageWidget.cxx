@@ -229,28 +229,28 @@ public:
 	T getPaintPosition(const Y& rt)
 	{
 		auto tmp_img = &(done_flag ? display_img_done : display_img);
-		float power(1.f);
+		double power(1.);
 		if (tmp_img->width() > tmp_img->height())
 		{
-			power = float(q_ptr->width()) / float(source_size.width());
+			power = double(q_ptr->width()) / double(source_size.width());
 		}
 		else
 		{
-			power = float(q_ptr->height()) / float(source_size.height());
+			power = double(q_ptr->height()) / double(source_size.height());
 		}
-		return T((float(rt.x()) - float(source_position.x())) * power, (float(rt.y()) - float(source_position.y())) * power);
+		return T((double(rt.x()) - double(source_position.x())) * power, (double(rt.y()) - double(source_position.y())) * power);
 	}
 	double getPower()
 	{
 		auto tmp_img = &(done_flag ? display_img_done : display_img);
-		float power(1.f);
+		double power(1.);
 		if (tmp_img->width() > tmp_img->height())
 		{
-			power = float(q_ptr->width()) / float(source_size.width());
+			power = double(q_ptr->width()) / double(source_size.width());
 		}
 		else
 		{
-			power = float(q_ptr->height()) / float(source_size.height());
+			power = double(q_ptr->height()) / double(source_size.height());
 		}
 		return power;
 	}
@@ -259,16 +259,16 @@ public:
 	T getImagePosition(const Y& rt)
 	{
 		auto tmp_img = &(done_flag ? display_img_done : display_img);
-		float power(1.f);
+		double power(1.);
 		if (tmp_img->width() > tmp_img->height())
 		{
-			power = float(source_size.width()) / float(q_ptr->width());
+			power = double(source_size.width()) / double(q_ptr->width());
 		}
 		else
 		{
-			power = float(source_size.height()) / float(q_ptr->height());
+			power = double(source_size.height()) / double(q_ptr->height());
 		}
-		return T(float(rt.x()) * power + source_position.x(), float(rt.y()) * power + source_position.y());
+		return T(double(rt.x()) * power + source_position.x(), double(rt.y()) * power + source_position.y());
 	}
 };
 
@@ -306,7 +306,7 @@ void ImageWidgetBase::displayCVMat(cv::Mat img)
 	{
 		QPoint src_pnt;
 		QSize src_size;
-		if (img.cols > img.rows)
+		if (float(img.cols) / float(img.rows) > float(width()) / float(height()))
 		{
 			float power = float(img.cols) / float(width());
 			auto w = float(height()) * power;
@@ -317,13 +317,13 @@ void ImageWidgetBase::displayCVMat(cv::Mat img)
 		}
 		else
 		{
+
 			float power = float(img.rows) / float(height());
 			auto h = float(width()) * power;
 			src_pnt.setY(0);
 			src_pnt.setX(-(h - float(img.cols)) / 2.);
 			src_size.setWidth(h);
 			src_size.setHeight(img.rows);
-
 		}
 		d->source_position = src_pnt;
 		d->source_size = src_size;
@@ -345,7 +345,7 @@ void ImageWidgetBase::displayQImage(const QImage& img)
 	{
 		QPoint src_pnt;
 		QSize src_size;
-		if (img.width() > img.height())
+		if (float(img.width()) / float(img.height()) > float(width()) / float(height()))
 		{
 			float power = float(img.width()) / float(width());
 			auto w = float(height()) * power;
@@ -394,7 +394,7 @@ void ImageWidgetBase::displayDoneCVMat(const cv::Mat& img)
 	{
 		QPoint src_pnt;
 		QSize src_size;
-		if (img.cols > img.rows)
+		if (float(img.cols) / float(img.rows) > float(width()) / float(height()))
 		{
 			float power = float(img.cols) / float(width());
 			auto w = float(height()) * power;
@@ -540,23 +540,26 @@ void ImageWidgetBase::resetScale()
 	QSize src_size;
 
 	auto tmp_img = &(d->done_flag ? d->display_img_done : d->display_img);
-	if (tmp_img->width() > tmp_img->height())
+	if (!tmp_img->isNull())
 	{
-		float power = float(tmp_img->width()) / float(width());
-		auto w = float(height()) * power;
-		src_pnt.setY(-(w - float(tmp_img->height())) / 2.);
-		src_pnt.setX(0);
-		src_size.setWidth(tmp_img->width());
-		src_size.setHeight(w);
-	}
-	else
-	{
-		float power = float(tmp_img->height()) / float(height());
-		auto h = float(width()) * power;
-		src_pnt.setY(0);
-		src_pnt.setX(-(h - float(tmp_img->width())) / 2.);
-		src_size.setWidth(h);
-		src_size.setHeight(tmp_img->height());
+		if (float(tmp_img->width()) / float(tmp_img->height()) > float(width()) / float(height()))
+		{
+			float power = float(tmp_img->width()) / float(width());
+			auto w = float(height()) * power;
+			src_pnt.setY(-(w - float(tmp_img->height())) / 2.);
+			src_pnt.setX(0);
+			src_size.setWidth(tmp_img->width());
+			src_size.setHeight(w);
+		}
+		else
+		{
+			float power = float(tmp_img->height()) / float(height());
+			auto h = float(width()) * power;
+			src_pnt.setY(0);
+			src_pnt.setX(-(h - float(tmp_img->width())) / 2.);
+			src_size.setWidth(h);
+			src_size.setHeight(tmp_img->height());
+		}
 	}
 	d->source_position = src_pnt;
 	d->source_size = src_size;
@@ -727,7 +730,7 @@ public:
 
 private:
 	friend ImageWidget;
-	QLinkedList<ImageBox*> box_list;
+	QList<ImageBox*> box_list;
 	ImageWidget* q_ptr;
 	bool is_painting;
 	ImageBox* grabed_box_ptr;
@@ -1027,7 +1030,9 @@ void ImageWidget::contextMenuEvent(QContextMenuEvent* e)
 		auto fn = QFileDialog::getSaveFileName(this, "选择文件", "./img.png", "Image (*.png *.bmp *.jpg)");
 		try
 		{
-			cv::imwrite(fn.toStdString(), d->rgb);
+			cv::Mat tmp;
+			cv::cvtColor(d->rgb,tmp,cv::COLOR_RGB2BGR);
+			cv::imwrite(fn.toStdString(), tmp);
 		}
 		catch (const cv::Exception& e)
 		{
@@ -1043,9 +1048,10 @@ void ImageWidget::contextMenuEvent(QContextMenuEvent* e)
 
 		try
 		{
-			cv::Mat save = d->rgb.clone();
-			d->paint_data.drawDatas(save);
-			cv::imwrite(fn.toStdString(), save);
+			cv::Mat tmp;
+			cv::cvtColor(d->rgb,tmp,cv::COLOR_RGB2BGR);
+			d->paint_data.drawDatas(tmp);
+			cv::imwrite(fn.toStdString(), tmp);
 		}
 		catch (const cv::Exception & e)
 		{
@@ -1794,27 +1800,27 @@ void RectImageBox::editEdge(const ImageBox::GrabedEdgeType& type, const QPointF&
 	switch (type)
 	{
 	case ImageBox::GrabedEdgeType::Left:
-		tmp_rt = getQRect();
+		tmp_rt = getQRectF();
 		tmp_rt.setLeft(pos.x());
 		fromQRectF(tmp_rt);
 		break;
 	case ImageBox::GrabedEdgeType::Right:
-		tmp_rt = getQRect();
+		tmp_rt = getQRectF();
 		tmp_rt.setRight(pos.x());
 		fromQRectF(tmp_rt);
 		break;
 	case ImageBox::GrabedEdgeType::Top:
-		tmp_rt = getQRect();
+		tmp_rt = getQRectF();
 		tmp_rt.setTop(pos.y());
 		fromQRectF(tmp_rt);
 		break;
 	case ImageBox::GrabedEdgeType::Bottom:
-		tmp_rt = getQRect();
+		tmp_rt = getQRectF();
 		tmp_rt.setBottom(pos.y());
 		fromQRectF(tmp_rt);
 		break;
 	case ImageBox::GrabedEdgeType::TopLeft:
-		tmp_rt = getQRect();
+		tmp_rt = getQRectF();
 		tmp_rt.setTopLeft(pos);
 		fromQRectF(tmp_rt);
 		break;
