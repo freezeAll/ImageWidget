@@ -74,6 +74,11 @@ ROIDialog::ROIDialog(cv::Mat src, ImageBox* ib, const double& sc,const bool& pt,
 
 	connect(okbtn_ptr, &QPushButton::clicked, this, [this]() {
 		ImageBox* out = d->iw_ptr->getImageBoxFromId(1);
+		if (!out)
+		{
+			accept();
+			return;
+		}
 		out->setBoxID(d->rtn_box->getBoxID());
 		*(d->rtn_box) = *out;
 		accept();
